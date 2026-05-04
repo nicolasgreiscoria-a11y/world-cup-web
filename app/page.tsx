@@ -1,5 +1,12 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import type { GroupStanding, Team } from "@/types/database";
+
+interface StandingWithTeam extends GroupStanding {
+  team: Team;
+}
+
+const ALL_GROUPS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -18,6 +25,31 @@ export default async function HomePage() {
 
     displayName = profile?.display_name ?? user.email ?? null;
   }
+
+  // Fetch compact standings for the teaser (top 2 per group)
+  const { data: rawStandings } = await supabase
+    .from("group_standings")
+    .select("*, team:teams(*)")
+    .order("points", { ascending: false });
+
+  const allStandings = (rawStandings ?? []) as unknown as StandingWithTeam[];
+  const hasStandings = allStandings.length > 0;
+
+  // Build top-2 per group
+  type GroupTop2 = { letter: string; teams: string[] };
+  const groupTeasers: GroupTop2[] = ALL_GROUPS.map((letter) => {
+    const rows = allStandings
+      .filter((s) => s.group_name === letter)
+      .sort((a, b) => {
+        const ptsDiff = b.points - a.points;
+        if (ptsDiff !== 0) return ptsDiff;
+        const gdA = a.goals_for - a.goals_against;
+        const gdB = b.goals_for - b.goals_against;
+        return gdB - gdA;
+      })
+      .slice(0, 2);
+    return { letter, teams: rows.map((r) => r.team?.name ?? "TBD") };
+  }).filter((g) => g.teams.length > 0);
 
   if (user) {
     return (
@@ -46,6 +78,52 @@ export default async function HomePage() {
               Create Pool
             </Link>
           </div>
+        </div>
+
+        {/* Groups teaser */}
+        <div className="mt-12 w-full max-w-3xl">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-slate-900">Group Standings</h2>
+            <Link
+              href="/groups"
+              className="text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors"
+            >
+              View all groups &rarr;
+            </Link>
+          </div>
+          {hasStandings ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {groupTeasers.map((g) => (
+                <Link
+                  key={g.letter}
+                  href="/groups"
+                  className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm hover:border-slate-300 transition-colors"
+                >
+                  <p className="mb-1.5 text-xs font-bold uppercase tracking-widest text-slate-400">
+                    Group {g.letter}
+                  </p>
+                  {g.teams.map((name, i) => (
+                    <p key={i} className="text-sm font-medium text-slate-800 truncate">
+                      {i === 0 ? "1. " : "2. "}
+                      {name}
+                    </p>
+                  ))}
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-slate-200 bg-white p-5 text-center shadow-sm">
+              <p className="text-sm text-slate-500">
+                Standings will be available once the tournament begins on June 11, 2026.
+              </p>
+              <Link
+                href="/groups"
+                className="mt-2 inline-block text-sm font-medium text-slate-700 hover:text-slate-900"
+              >
+                View groups page &rarr;
+              </Link>
+            </div>
+          )}
         </div>
       </main>
     );
