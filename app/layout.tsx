@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Nav } from "@/components/nav";
@@ -14,8 +14,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "World Cup 2026 | Bracket Challenge",
-  description: "Create your bracket, join a pool, and compete with friends for the 2026 FIFA World Cup.",
+  title: "WC2026 | Bracket Challenge",
+  description: "Predict the 2026 FIFA World Cup bracket and compete with friends",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

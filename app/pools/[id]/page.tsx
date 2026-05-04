@@ -114,8 +114,8 @@ export default async function PoolDetailPage({ params }: PoolDetailPageProps) {
         {/* Invite section */}
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="mb-2 text-sm font-semibold text-slate-700">Invite friends</p>
-          <div className="flex items-center gap-2">
-            <div className="flex-1 overflow-hidden rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-mono text-slate-600 truncate">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex-1 min-w-0 overflow-hidden rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-mono text-slate-600 truncate">
               {inviteUrl}
             </div>
             <CopyInviteButton inviteUrl={inviteUrl} inviteCode={pool.invite_code} />

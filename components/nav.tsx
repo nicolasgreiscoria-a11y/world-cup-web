@@ -34,14 +34,26 @@ export async function Nav() {
         </Link>
 
         {/* Right side */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 overflow-x-auto">
           {user ? (
             <>
               <Link
                 href="/pools"
-                className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+                className="shrink-0 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
               >
                 My Pools
+              </Link>
+              <Link
+                href="/groups"
+                className="shrink-0 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+              >
+                Groups
+              </Link>
+              <Link
+                href="/leaderboard"
+                className="shrink-0 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+              >
+                Leaderboard
               </Link>
 
               <div className="flex items-center gap-2">
