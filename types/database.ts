@@ -116,11 +116,13 @@ export interface Database {
           user_id: string
           submitted_at: string | null
           total_points: number
+          picks_json: Record<string, unknown> | null
           created_at: string
         }
-        Insert: Omit<Database["public"]["Tables"]["brackets"]["Row"], "id" | "created_at"> & {
+        Insert: Omit<Database["public"]["Tables"]["brackets"]["Row"], "id" | "created_at" | "picks_json"> & {
           id?: string
           created_at?: string
+          picks_json?: Record<string, unknown> | null
         }
         Update: Partial<Omit<Database["public"]["Tables"]["brackets"]["Row"], "id">>
         Relationships: []
