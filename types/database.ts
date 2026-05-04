@@ -3,6 +3,7 @@ export type MatchStatus = "scheduled" | "live" | "finished"
 
 export interface Database {
   public: {
+    PostgrestVersion: "12"
     Tables: {
       teams: {
         Row: {
@@ -19,6 +20,7 @@ export interface Database {
           created_at?: string
         }
         Update: Partial<Database["public"]["Tables"]["teams"]["Insert"]>
+        Relationships: []
       }
       matches: {
         Row: {
@@ -40,6 +42,7 @@ export interface Database {
           created_at?: string
         }
         Update: Partial<Database["public"]["Tables"]["matches"]["Insert"]>
+        Relationships: []
       }
       group_standings: {
         Row: {
@@ -61,6 +64,7 @@ export interface Database {
           updated_at?: string
         }
         Update: Partial<Database["public"]["Tables"]["group_standings"]["Insert"]>
+        Relationships: []
       }
       profiles: {
         Row: {
@@ -73,6 +77,7 @@ export interface Database {
           created_at?: string
         }
         Update: Partial<Omit<Database["public"]["Tables"]["profiles"]["Row"], "id">>
+        Relationships: []
       }
       pools: {
         Row: {
@@ -88,6 +93,7 @@ export interface Database {
           created_at?: string
         }
         Update: Partial<Omit<Database["public"]["Tables"]["pools"]["Row"], "id">>
+        Relationships: []
       }
       pool_members: {
         Row: {
@@ -101,6 +107,7 @@ export interface Database {
           joined_at?: string
         }
         Update: Partial<Database["public"]["Tables"]["pool_members"]["Insert"]>
+        Relationships: []
       }
       brackets: {
         Row: {
@@ -116,6 +123,7 @@ export interface Database {
           created_at?: string
         }
         Update: Partial<Omit<Database["public"]["Tables"]["brackets"]["Row"], "id">>
+        Relationships: []
       }
       group_picks: {
         Row: {
@@ -131,6 +139,7 @@ export interface Database {
           id?: string
         }
         Update: Partial<Omit<Database["public"]["Tables"]["group_picks"]["Row"], "id">>
+        Relationships: []
       }
       bracket_picks: {
         Row: {
@@ -144,6 +153,7 @@ export interface Database {
           id?: string
         }
         Update: Partial<Omit<Database["public"]["Tables"]["bracket_picks"]["Row"], "id">>
+        Relationships: []
       }
     }
     Views: {
@@ -156,6 +166,7 @@ export interface Database {
           total_points: number
           rank: number
         }
+        Relationships: []
       }
     }
     Functions: {
