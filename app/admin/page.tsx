@@ -25,6 +25,10 @@ export default async function AdminPage() {
     redirect("/login")
   }
 
+  if (user.email !== process.env.ADMIN_EMAIL) {
+    redirect("/")
+  }
+
   // Fetch all matches then look up team names separately to avoid FK hint issues
   const { data: rawMatches } = await supabase
     .from("matches")
