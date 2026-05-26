@@ -117,8 +117,8 @@ export async function syncWorldCup(): Promise<{
       if (standingsRes.data?.standings) {
         for (const group of standingsRes.data.standings) {
           if (group.type === "TOTAL" && group.group) {
-            // group.group looks like "GROUP_A" — normalise to "A"
-            const letter = group.group.replace("GROUP_", "")
+            // API returns "Group A" or "GROUP_A" depending on season — extract just the letter
+            const letter = group.group.replace(/^(Group\s+|GROUP_)/i, "").trim()
             for (const row of group.table) {
               groupByTeamId.set(row.team.id, letter)
             }
@@ -243,7 +243,7 @@ export async function syncWorldCup(): Promise<{
     if (standingsRes.data?.standings) {
       for (const group of standingsRes.data.standings) {
         if (group.type !== "TOTAL" || !group.group) continue
-        const letter = group.group.replace("GROUP_", "")
+        const letter = group.group.replace(/^(Group\s+|GROUP_)/i, "").trim()
 
         for (const row of group.table) {
           const teamId = teamIdByName.get(row.team.name)

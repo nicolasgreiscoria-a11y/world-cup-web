@@ -15,7 +15,11 @@ const ROUND_LABELS: Record<string, string> = {
 
 const ROUND_ORDER = ["group", "r32", "r16", "qf", "sf", "third_place", "final"]
 
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
   const supabase = await createClient()
   const {
     data: { user },
@@ -28,6 +32,13 @@ export default async function AdminPage() {
   if (user.email !== process.env.ADMIN_EMAIL) {
     redirect("/")
   }
+
+  const params = await searchParams
+  const syncedParam = params.synced === "1"
+  const errorParam = typeof params.error === "string" ? params.error : null
+  const teamsParam = typeof params.teams === "string" ? Number(params.teams) : null
+  const matchesParam = typeof params.matches === "string" ? Number(params.matches) : null
+  const scoresParam = typeof params.scores === "string" ? Number(params.scores) : null
 
   // Fetch all matches then look up team names separately to avoid FK hint issues
   const { data: rawMatches } = await supabase
@@ -69,6 +80,21 @@ export default async function AdminPage() {
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">Admin Panel</h1>
           <p className="mt-1 text-sm text-slate-500">World Cup 2026 management</p>
         </div>
+
+        {/* Sync result banner */}
+        {syncedParam && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-800">
+            <strong>Sync complete.</strong>{" "}
+            {teamsParam !== null && teamsParam > 0 && `${teamsParam} teams seeded. `}
+            {matchesParam !== null && `${matchesParam} matches updated. `}
+            {scoresParam !== null && `${scoresParam} bracket scores recalculated.`}
+          </div>
+        )}
+        {errorParam && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800">
+            <strong>Sync failed:</strong> {errorParam}
+          </div>
+        )}
 
         {/* Sync section */}
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">

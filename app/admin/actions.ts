@@ -2,17 +2,13 @@
 
 import { syncWorldCup } from "@/lib/football-api/sync"
 import { applyScoresForAllBrackets } from "@/lib/applyScores"
+import { redirect } from "next/navigation"
 
-export async function triggerSync(): Promise<{
-  matchesUpdated?: number
-  teamsSeeded?: number
-  scoresUpdated?: number
-  error?: string
-}> {
+export async function triggerSync() {
   const syncResult = await syncWorldCup()
 
   if (syncResult.error) {
-    return { ...syncResult, scoresUpdated: 0 }
+    redirect(`/admin?error=${encodeURIComponent(syncResult.error)}`)
   }
 
   let scoresUpdated = 0
@@ -21,8 +17,10 @@ export async function triggerSync(): Promise<{
     scoresUpdated = scoreResult.updated
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error"
-    return { ...syncResult, scoresUpdated: 0, error: message }
+    redirect(`/admin?error=${encodeURIComponent(message)}`)
   }
 
-  return { ...syncResult, scoresUpdated }
+  redirect(
+    `/admin?synced=1&teams=${syncResult.teamsSeeded ?? 0}&matches=${syncResult.matchesUpdated ?? 0}&scores=${scoresUpdated}`
+  )
 }
