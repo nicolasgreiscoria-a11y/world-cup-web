@@ -1,4 +1,4 @@
-import type { GroupPick, GroupStanding, Match } from "@/types/database"
+import type { GroupPick, GroupStanding, Match, MatchScorePick } from "@/types/database"
 
 interface PickEntry {
   match: number
@@ -138,17 +138,57 @@ export function scoreKnockoutPicks(
 }
 
 /**
- * Total bracket score: sum of all group picks + knockout picks.
+ * Score match-level predictions for group stage matches.
+ * +1 for correct result (W/D/L), +3 total for exact score.
+ */
+export function scoreMatchPredictions(
+  matchScorePicks: Pick<MatchScorePick, "match_id" | "predicted_score1" | "predicted_score2">[],
+  realMatches: Match[]
+): number {
+  let points = 0
+
+  for (const pick of matchScorePicks) {
+    const real = realMatches.find((m) => m.id === pick.match_id)
+    if (!real || real.status !== "finished" || real.score1 === null || real.score2 === null) {
+      continue
+    }
+
+    const predictedResult =
+      pick.predicted_score1 > pick.predicted_score2
+        ? "team1"
+        : pick.predicted_score1 < pick.predicted_score2
+        ? "team2"
+        : "draw"
+    const realResult =
+      real.score1 > real.score2 ? "team1" : real.score1 < real.score2 ? "team2" : "draw"
+
+    if (
+      pick.predicted_score1 === real.score1 &&
+      pick.predicted_score2 === real.score2
+    ) {
+      points += 3 // exact score (includes correct result)
+    } else if (predictedResult === realResult) {
+      points += 1 // correct result only
+    }
+  }
+
+  return points
+}
+
+/**
+ * Total bracket score: sum of all group picks + match score picks + knockout picks.
  */
 export function totalBracketScore(
   groupPicks: GroupPick[],
   picksJson: PicksJson,
-  ctx: ScoringContext
+  ctx: ScoringContext,
+  matchScorePicks?: Pick<MatchScorePick, "match_id" | "predicted_score1" | "predicted_score2">[]
 ): number {
   const groupTotal = groupPicks.reduce(
     (sum, pick) => sum + scoreGroupPick(pick, ctx),
     0
   )
   const knockoutTotal = scoreKnockoutPicks(picksJson, ctx)
-  return groupTotal + knockoutTotal
+  const matchTotal = matchScorePicks ? scoreMatchPredictions(matchScorePicks, ctx.realMatches) : 0
+  return groupTotal + knockoutTotal + matchTotal
 }

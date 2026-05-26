@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { BracketFillClient } from "@/components/bracket/BracketFillClient";
-import type { Team } from "@/types/database";
+import type { Team, Match } from "@/types/database";
 
 interface BracketFillPageProps {
   searchParams: Promise<{ pool?: string }>;
@@ -161,6 +161,13 @@ export default async function BracketFillPage({ searchParams }: BracketFillPageP
     );
   }
 
+  // Fetch group stage matches for score prediction UI
+  const { data: groupMatches } = await supabase
+    .from("matches")
+    .select("id, match_number, team1_id, team2_id, round")
+    .eq("round", "group")
+    .order("match_number", { ascending: true });
+
   return (
     <main className="flex-1 bg-slate-50 px-4 py-8">
       <div className="mx-auto max-w-4xl">
@@ -179,6 +186,7 @@ export default async function BracketFillPage({ searchParams }: BracketFillPageP
           bracketId={bracket.id}
           poolId={poolId}
           teams={teams as Team[]}
+          groupMatches={(groupMatches ?? []) as Pick<Match, "id" | "match_number" | "team1_id" | "team2_id" | "round">[]}
         />
       </div>
     </main>

@@ -157,6 +157,21 @@ export interface Database {
         Update: Partial<Omit<Database["public"]["Tables"]["bracket_picks"]["Row"], "id">>
         Relationships: []
       }
+      match_score_picks: {
+        Row: {
+          id: string
+          bracket_id: string
+          match_id: string
+          predicted_score1: number
+          predicted_score2: number
+          points_earned: number
+        }
+        Insert: Omit<Database["public"]["Tables"]["match_score_picks"]["Row"], "id"> & {
+          id?: string
+        }
+        Update: Partial<Omit<Database["public"]["Tables"]["match_score_picks"]["Row"], "id">>
+        Relationships: []
+      }
     }
     Views: {
       leaderboard: {
@@ -190,6 +205,7 @@ export type PoolMember = Database["public"]["Tables"]["pool_members"]["Row"]
 export type Bracket = Database["public"]["Tables"]["brackets"]["Row"]
 export type GroupPick = Database["public"]["Tables"]["group_picks"]["Row"]
 export type BracketPick = Database["public"]["Tables"]["bracket_picks"]["Row"]
+export type MatchScorePick = Database["public"]["Tables"]["match_score_picks"]["Row"]
 export type LeaderboardEntry = Database["public"]["Views"]["leaderboard"]["Row"]
 
 // Joined types used in components

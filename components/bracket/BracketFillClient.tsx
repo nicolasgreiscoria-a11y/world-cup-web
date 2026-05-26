@@ -1,33 +1,38 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { submitBracket } from "@/app/bracket/actions";
-import type { Team } from "@/types/database";
-import type { GroupPickInput, KnockoutPicksJson, KnockoutMatchPick } from "@/app/bracket/actions";
+import type { Team, Match } from "@/types/database";
+import type { MatchScorePickInput, GroupPickInput, KnockoutMatchPick, KnockoutPicksJson } from "@/app/bracket/actions";
+import {
+  computeAllGroupStandings,
+  deriveGroupPicks,
+  computeBestThirds,
+  buildThirdsFromStandings,
+  type TeamStanding,
+  type ScoreEntry,
+  type GroupMatchInput,
+} from "@/lib/standingsComputer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface GroupPick {
-  first: string;
-  second: string;
-  third: string;
-}
+// Indexed by group_name, value is { first, second, third } team IDs (derived)
+type GroupPicks = Record<string, { first: string; second: string; third: string }>;
 
-// Indexed by group_name
-type GroupPicks = Record<string, GroupPick>;
+// matchId → { score1, score2 }
+type GroupScores = Record<string, ScoreEntry>;
 
-// R32 matchup definition (static structure, team IDs resolved from state)
+// ─── R32 matchup definitions ───────────────────────────────────────────────
+
 interface R32Slot {
   matchNum: number;
-  labelA: string; // e.g. "Group A Winner"
+  labelA: string;
   labelB: string;
   resolveA: (gp: GroupPicks, at: string[]) => string | null;
   resolveB: (gp: GroupPicks, at: string[]) => string | null;
 }
-
-// ─── R32 matchup definitions ───────────────────────────────────────────────
 
 const R32_SLOTS: R32Slot[] = [
   // Part A: Winners vs Advancing Thirds
@@ -270,8 +275,7 @@ function MatchCard({ matchNum, teamA, teamB, labelA, labelB, winnerId, onPick, r
 // ─── Step Indicator ────────────────────────────────────────────────────────
 
 const STEP_LABELS = [
-  "Group Stage",
-  "Best 8 Thirds",
+  "Group Scores",
   "Round of 32",
   "Round of 16",
   "Quarter-Finals",
@@ -319,178 +323,233 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
   );
 }
 
-// ─── Group Stage Step ──────────────────────────────────────────────────────
+// ─── Group Scores Step ─────────────────────────────────────────────────────
 
-interface GroupStageStepProps {
+interface GroupScoresStepProps {
   groups: Record<string, Team[]>;
-  groupPicks: GroupPicks;
-  onChange: (groupName: string, pick: GroupPick) => void;
-}
-
-function GroupStageStep({ groups, groupPicks, onChange }: GroupStageStepProps) {
-  return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-bold text-slate-800">Step 1: Group Stage Picks</h2>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Select who finishes 1st, 2nd, and 3rd in each group. No repeats allowed.
-        </p>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {Object.entries(groups)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([groupName, teams]) => {
-            const pick = groupPicks[groupName] ?? { first: "", second: "", third: "" };
-
-            const options = teams.map((t) => ({ value: t.id, label: t.name, countryCode: t.country_code }));
-
-            const makeOpts = (exclude1: string, exclude2: string) =>
-              options.filter((o) => o.value !== exclude1 && o.value !== exclude2);
-
-            return (
-              <div key={groupName} className="rounded-xl border border-slate-200 bg-white shadow-sm p-4 space-y-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="flex items-center justify-center w-7 h-7 rounded-full bg-slate-900 text-white text-xs font-bold">
-                    {groupName}
-                  </span>
-                  <span className="text-sm font-semibold text-slate-700">Group {groupName}</span>
-                </div>
-
-                {/* Teams in group (read only reference) */}
-                <div className="flex flex-wrap gap-1 mb-2">
-                  {teams.map((t) => (
-                    <span key={t.id} className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                      <FlagImg countryCode={t.country_code} name={t.name} />
-                      {t.name}
-                    </span>
-                  ))}
-                </div>
-
-                {/* 1st place */}
-                <div>
-                  <label className="block text-xs font-semibold text-amber-600 mb-1">1st Place</label>
-                  <select
-                    value={pick.first}
-                    onChange={(e) => onChange(groupName, { ...pick, first: e.target.value })}
-                    className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select team...</option>
-                    {makeOpts(pick.second, pick.third).map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 2nd place */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">2nd Place</label>
-                  <select
-                    value={pick.second}
-                    onChange={(e) => onChange(groupName, { ...pick, second: e.target.value })}
-                    className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select team...</option>
-                    {makeOpts(pick.first, pick.third).map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 3rd place */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">3rd Place</label>
-                  <select
-                    value={pick.third}
-                    onChange={(e) => onChange(groupName, { ...pick, third: e.target.value })}
-                    className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select team...</option>
-                    {makeOpts(pick.first, pick.second).map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            );
-          })}
-      </div>
-    </div>
-  );
-}
-
-// ─── Best 8 Thirds Step ────────────────────────────────────────────────────
-
-interface BestThirdsStepProps {
-  groupPicks: GroupPicks;
+  groupMatches: GroupMatchInput[];
+  groupScores: GroupScores;
+  allStandings: Record<string, TeamStanding[]>;
   teamById: Map<string, Team>;
-  advancingThirds: string[];
-  onChange: (selected: string[]) => void;
+  onScoreChange: (matchId: string, score1: number | null, score2: number | null) => void;
 }
 
-function BestThirdsStep({ groupPicks, teamById, advancingThirds, onChange }: BestThirdsStepProps) {
-  const thirds = Object.entries(groupPicks)
-    .filter(([, p]) => p.third)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([groupName, p]) => ({ groupName, teamId: p.third }));
+function GroupScoresStep({
+  groups,
+  groupMatches,
+  groupScores,
+  allStandings,
+  teamById,
+  onScoreChange,
+}: GroupScoresStepProps) {
+  const [openGroup, setOpenGroup] = useState<string | null>(
+    Object.keys(groups).sort()[0] ?? null
+  );
 
-  const toggle = (teamId: string) => {
-    if (advancingThirds.includes(teamId)) {
-      onChange(advancingThirds.filter((id) => id !== teamId));
-    } else if (advancingThirds.length < 8) {
-      onChange([...advancingThirds, teamId]);
+  const matchesByGroup = useMemo(() => {
+    const map: Record<string, GroupMatchInput[]> = {};
+    for (const m of groupMatches) {
+      const team = teamById.get(m.team1_id);
+      const grp = team?.group_name;
+      if (!grp) continue;
+      if (!map[grp]) map[grp] = [];
+      map[grp].push(m);
     }
-  };
+    return map;
+  }, [groupMatches, teamById]);
+
+  const groupNames = Object.keys(groups).sort();
+
+  const completedGroups = groupNames.filter((grp) => {
+    const matches = matchesByGroup[grp] ?? [];
+    return matches.length > 0 && matches.every((m) => {
+      const s = groupScores[m.id];
+      return s !== undefined && s.score1 !== null && s.score2 !== null;
+    });
+  });
 
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-bold text-slate-800">Step 2: Best 8 Thirds</h2>
+        <h2 className="text-lg font-bold text-slate-800">Step 1: Group Stage Scores</h2>
         <p className="text-sm text-slate-500 mt-0.5">
-          Select exactly 8 of the 12 third-place teams that you predict will advance to the Round of 32.
+          Predict the score of every group match. Standings and advancing thirds are calculated automatically.
         </p>
-        <p className={cn("text-sm font-semibold mt-2", advancingThirds.length === 8 ? "text-green-600" : "text-amber-600")}>
-          {advancingThirds.length}/8 selected
+        <p className={cn(
+          "text-sm font-semibold mt-2",
+          completedGroups.length === 12 ? "text-green-600" : "text-amber-600"
+        )}>
+          {completedGroups.length}/12 groups fully predicted
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {thirds.map(({ groupName, teamId }) => {
-          const team = teamById.get(teamId);
-          const isSelected = advancingThirds.includes(teamId);
-          const isDisabled = !isSelected && advancingThirds.length >= 8;
+      <div className="space-y-2">
+        {groupNames.map((grp) => {
+          const matches = matchesByGroup[grp] ?? [];
+          const standings = allStandings[grp] ?? [];
+          const isOpen = openGroup === grp;
+          const filledCount = matches.filter((m) => {
+            const s = groupScores[m.id];
+            return s !== undefined;
+          }).length;
+          const isComplete = filledCount === matches.length && matches.length > 0;
 
           return (
-            <button
-              key={teamId}
-              onClick={() => toggle(teamId)}
-              disabled={isDisabled}
-              className={cn(
-                "flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all",
-                isSelected
-                  ? "border-blue-500 bg-blue-50"
-                  : isDisabled
-                  ? "border-slate-100 bg-slate-50 opacity-40 cursor-not-allowed"
-                  : "border-slate-200 bg-white hover:border-slate-300 cursor-pointer"
-              )}
-            >
-              <div className={cn(
-                "flex items-center justify-center w-5 h-5 rounded-full border-2 shrink-0",
-                isSelected ? "border-blue-500 bg-blue-500" : "border-slate-300 bg-white"
-              )}>
-                {isSelected && (
-                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
-              </div>
-              {team && <FlagImg countryCode={team.country_code} name={team.name} />}
-              <div>
-                <span className={cn("text-sm font-medium", isSelected ? "text-blue-800" : "text-slate-700")}>
-                  {team?.name ?? teamId}
+            <div key={grp} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              {/* Accordion header */}
+              <button
+                onClick={() => setOpenGroup(isOpen ? null : grp)}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 transition-colors"
+              >
+                <span className="flex items-center justify-center w-7 h-7 rounded-full bg-slate-900 text-white text-xs font-bold shrink-0">
+                  {grp}
                 </span>
-                <span className="block text-xs text-slate-400">Group {groupName} — 3rd</span>
-              </div>
-            </button>
+                <span className="text-sm font-semibold text-slate-700 flex-1">Group {grp}</span>
+                <span className={cn(
+                  "text-xs font-semibold px-2 py-0.5 rounded-full",
+                  isComplete ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                )}>
+                  {filledCount}/{matches.length}
+                </span>
+                <svg
+                  className={cn("w-4 h-4 text-slate-400 transition-transform", isOpen && "rotate-180")}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {/* Accordion body */}
+              {isOpen && (
+                <div className="px-4 pb-4 space-y-4 border-t border-slate-100">
+                  {/* Match score inputs */}
+                  <div className="space-y-2 pt-3">
+                    {matches.map((m) => {
+                      const team1 = teamById.get(m.team1_id);
+                      const team2 = teamById.get(m.team2_id);
+                      const s = groupScores[m.id];
+
+                      return (
+                        <div key={m.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                          {/* Team 1 */}
+                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                            {team1 && <FlagImg countryCode={team1.country_code} name={team1.name} />}
+                            <span className="text-sm font-medium text-slate-800 truncate">
+                              {team1?.name ?? "TBD"}
+                            </span>
+                          </div>
+
+                          {/* Score inputs */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <input
+                              type="number"
+                              min={0}
+                              max={20}
+                              value={s?.score1 ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value === "" ? null : Math.max(0, Math.min(20, parseInt(e.target.value, 10)));
+                                onScoreChange(m.id, isNaN(val as number) ? null : val, s?.score2 ?? null);
+                              }}
+                              className="w-10 text-center rounded-md border border-slate-300 bg-white px-1 py-1 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="0"
+                            />
+                            <span className="text-xs font-bold text-slate-400">-</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={20}
+                              value={s?.score2 ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value === "" ? null : Math.max(0, Math.min(20, parseInt(e.target.value, 10)));
+                                onScoreChange(m.id, s?.score1 ?? null, isNaN(val as number) ? null : val);
+                              }}
+                              className="w-10 text-center rounded-md border border-slate-300 bg-white px-1 py-1 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="0"
+                            />
+                          </div>
+
+                          {/* Team 2 */}
+                          <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
+                            <span className="text-sm font-medium text-slate-800 truncate text-right">
+                              {team2?.name ?? "TBD"}
+                            </span>
+                            {team2 && <FlagImg countryCode={team2.country_code} name={team2.name} />}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Live standings preview */}
+                  {standings.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Predicted Standings</p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-slate-400 border-b border-slate-100">
+                              <th className="text-left pb-1 w-6">#</th>
+                              <th className="text-left pb-1">Team</th>
+                              <th className="text-right pb-1 w-7">P</th>
+                              <th className="text-right pb-1 w-7">W</th>
+                              <th className="text-right pb-1 w-7">D</th>
+                              <th className="text-right pb-1 w-7">L</th>
+                              <th className="text-right pb-1 w-8">GF</th>
+                              <th className="text-right pb-1 w-8">GA</th>
+                              <th className="text-right pb-1 w-8">GD</th>
+                              <th className="text-right pb-1 w-8 font-bold">Pts</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {standings.map((row) => {
+                              const team = teamById.get(row.teamId);
+                              const advancing = row.position === 1 || row.position === 2;
+                              const potentialThird = row.position === 3;
+                              return (
+                                <tr
+                                  key={row.teamId}
+                                  className={cn(
+                                    "border-b border-slate-50",
+                                    advancing ? "bg-green-50" : potentialThird ? "bg-orange-50" : ""
+                                  )}
+                                >
+                                  <td className="py-1 pr-1">
+                                    <span className={cn(
+                                      "inline-flex items-center justify-center w-4 h-4 rounded-full text-xs font-bold",
+                                      advancing ? "bg-green-500 text-white" : potentialThird ? "bg-orange-400 text-white" : "bg-slate-200 text-slate-500"
+                                    )}>
+                                      {row.position}
+                                    </span>
+                                  </td>
+                                  <td className="py-1">
+                                    <div className="flex items-center gap-1">
+                                      {team && <FlagImg countryCode={team.country_code} name={team.name} />}
+                                      <span className="text-slate-700 font-medium truncate max-w-[80px]">{team?.name ?? row.teamId}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-1 text-right text-slate-500">{row.played}</td>
+                                  <td className="py-1 text-right text-slate-500">{row.wins}</td>
+                                  <td className="py-1 text-right text-slate-500">{row.draws}</td>
+                                  <td className="py-1 text-right text-slate-500">{row.losses}</td>
+                                  <td className="py-1 text-right text-slate-500">{row.gf}</td>
+                                  <td className="py-1 text-right text-slate-500">{row.ga}</td>
+                                  <td className="py-1 text-right text-slate-500">{row.gd > 0 ? `+${row.gd}` : row.gd}</td>
+                                  <td className="py-1 text-right font-bold text-slate-800">{row.points}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                        <p className="text-xs text-slate-400 mt-1">
+                          <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1" />advancing &nbsp;
+                          <span className="inline-block w-2 h-2 rounded-full bg-orange-400 mr-1" />potential third
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
@@ -578,12 +637,9 @@ function FinalStep({
 }: FinalStepProps) {
   const sfPickMap = new Map(sfPicks.map((p) => [p.match, p.winner_id]));
 
-  // SF match 1 and 2 winners advance to Final
   const finalist1 = sfPickMap.get(1) ? teamById.get(sfPickMap.get(1)!) ?? null : null;
   const finalist2 = sfPickMap.get(2) ? teamById.get(sfPickMap.get(2)!) ?? null : null;
 
-  // SF losers go to 3rd place match
-  // For SF match 1: the loser is the team in sfMatchups[0] that isn't the winner
   const sfMatch1 = sfMatchups[0];
   const sfMatch2 = sfMatchups[1];
 
@@ -612,7 +668,7 @@ function FinalStep({
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-lg font-bold text-slate-800">Step 7: Final + 3rd Place</h2>
+        <h2 className="text-lg font-bold text-slate-800">Step 6: Final + 3rd Place</h2>
         <p className="text-sm text-slate-500 mt-0.5">Pick your champion and the 3rd place winner.</p>
       </div>
 
@@ -688,23 +744,31 @@ interface BracketFillClientProps {
   bracketId: string;
   poolId: string;
   teams: Team[];
+  groupMatches: Pick<Match, "id" | "match_number" | "team1_id" | "team2_id" | "round">[];
 }
 
-export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClientProps) {
+export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: BracketFillClientProps) {
   const router = useRouter();
 
   // Build lookup maps
-  const teamById = new Map(teams.map((t) => [t.id, t]));
-  const groups: Record<string, Team[]> = {};
-  for (const team of teams) {
-    if (!groups[team.group_name]) groups[team.group_name] = [];
-    groups[team.group_name].push(team);
-  }
+  const teamById = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
+  const groups = useMemo(() => {
+    const g: Record<string, Team[]> = {};
+    for (const team of teams) {
+      if (!g[team.group_name]) g[team.group_name] = [];
+      g[team.group_name].push(team);
+    }
+    return g;
+  }, [teams]);
+
+  const groupMatchInputs = useMemo(
+    () => groupMatches.map((m) => ({ id: m.id, team1_id: m.team1_id ?? "", team2_id: m.team2_id ?? "" })),
+    [groupMatches]
+  );
 
   // ─── State ──────────────────────────────────────────────────────────────
-  const [step, setStep] = useState(1); // 1–7
-  const [groupPicks, setGroupPicks] = useState<GroupPicks>({});
-  const [advancingThirds, setAdvancingThirds] = useState<string[]>([]);
+  const [step, setStep] = useState(1); // 1–6
+  const [groupScores, setGroupScores] = useState<GroupScores>({});
 
   const [knockoutPicks, setKnockoutPicks] = useState<{
     r32: KnockoutMatchPick[];
@@ -725,10 +789,38 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // ─── Group picks handler ─────────────────────────────────────────────
-  const handleGroupPickChange = useCallback((groupName: string, pick: GroupPick) => {
-    setGroupPicks((prev) => ({ ...prev, [groupName]: pick }));
-  }, []);
+  // ─── Derived: standings from predicted scores ────────────────────────
+  const allStandings = useMemo(
+    () => computeAllGroupStandings(teams, groupMatchInputs, groupScores),
+    [teams, groupMatchInputs, groupScores]
+  );
+
+  const derivedGroupPicks = useMemo(
+    () => deriveGroupPicks(allStandings),
+    [allStandings]
+  );
+
+  const advancingThirds = useMemo(() => {
+    const thirds = buildThirdsFromStandings(allStandings, teams);
+    return computeBestThirds(thirds);
+  }, [allStandings, teams]);
+
+  // ─── Score change handler ────────────────────────────────────────────
+  const handleScoreChange = useCallback(
+    (matchId: string, score1: number | null, score2: number | null) => {
+      setGroupScores((prev) => {
+        if (score1 === null && score2 === null) {
+          const next = { ...prev };
+          delete next[matchId];
+          return next;
+        }
+        return { ...prev, [matchId]: { score1, score2 } };
+      });
+      // Changing group scores invalidates knockout picks since teams may shift
+      setKnockoutPicks({ r32: [], r16: [], qf: [], sf: [], third_place: null, final: null });
+    },
+    []
+  );
 
   // ─── Knockout pick handler ───────────────────────────────────────────
   const handleKnockoutPick = useCallback(
@@ -745,12 +837,9 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
         const updated = roundPicks.filter((p) => p.match !== matchNum);
         updated.push({ match: matchNum, winner_id: winnerId });
 
-        // Cascade: when a pick changes, clear downstream dependent picks
         const newState = { ...prev, [roundKey]: updated };
 
-        // Clear downstream rounds when a pick changes
         if (roundKey === "r32") {
-          // Clear r16, qf, sf, third_place, final
           newState.r16 = [];
           newState.qf = [];
           newState.sf = [];
@@ -776,22 +865,20 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
     []
   );
 
-  // ─── Derive R32 matchups ─────────────────────────────────────────────
-  // advancingThirds sorted by group_name alphabetically
-  const sortedThirds = Object.entries(groupPicks)
-    .filter(([, p]) => advancingThirds.includes(p.third))
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, p]) => p.third);
+  // ─── Derive R32 matchups (using computed standings) ─────────────────
+  const r32Matchups = useMemo(
+    () =>
+      R32_SLOTS.map((slot) => ({
+        matchNum: slot.matchNum,
+        labelA: slot.labelA,
+        labelB: slot.labelB,
+        teamAId: slot.resolveA(derivedGroupPicks, advancingThirds),
+        teamBId: slot.resolveB(derivedGroupPicks, advancingThirds),
+      })),
+    [derivedGroupPicks, advancingThirds]
+  );
 
-  const r32Matchups = R32_SLOTS.map((slot) => ({
-    matchNum: slot.matchNum,
-    labelA: slot.labelA,
-    labelB: slot.labelB,
-    teamAId: slot.resolveA(groupPicks, sortedThirds),
-    teamBId: slot.resolveB(groupPicks, sortedThirds),
-  }));
-
-  // ─── Derive R16 matchups from R32 picks ────────────────────────────
+  // ─── Derive R16/QF/SF matchups ───────────────────────────────────────
   const r32PickMap = new Map(knockoutPicks.r32.map((p) => [p.match, p.winner_id]));
   const r32Winners = Array.from({ length: 16 }, (_, i) => r32PickMap.get(i + 1) ?? null);
   const r16Pairs = pairWinners(r32Winners);
@@ -803,7 +890,6 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
     teamBId: pair.b,
   }));
 
-  // ─── Derive QF matchups from R16 picks ────────────────────────────
   const r16PickMap = new Map(knockoutPicks.r16.map((p) => [p.match, p.winner_id]));
   const r16Winners = Array.from({ length: 8 }, (_, i) => r16PickMap.get(i + 1) ?? null);
   const qfPairs = pairWinners(r16Winners);
@@ -815,7 +901,6 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
     teamBId: pair.b,
   }));
 
-  // ─── Derive SF matchups from QF picks ─────────────────────────────
   const qfPickMap = new Map(knockoutPicks.qf.map((p) => [p.match, p.winner_id]));
   const qfWinners = Array.from({ length: 4 }, (_, i) => qfPickMap.get(i + 1) ?? null);
   const sfPairs = pairWinners(qfWinners);
@@ -827,25 +912,20 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
     teamBId: pair.b,
   }));
 
-  // ─── Validation for Next ─────────────────────────────────────────────
-  const groupNames = Object.keys(groups).sort();
+  // ─── Validation ─────────────────────────────────────────────────────
+  const isStep1Complete = useMemo(() => {
+    return groupMatchInputs.length > 0 &&
+      groupMatchInputs.every((m) => {
+        const s = groupScores[m.id];
+        return s !== undefined && s.score1 !== null && s.score2 !== null;
+      });
+  }, [groupMatchInputs, groupScores]);
 
-  const isStep1Complete = groupNames.every((g) => {
-    const p = groupPicks[g];
-    return p?.first && p?.second && p?.third && p.first !== p.second && p.first !== p.third && p.second !== p.third;
-  });
-
-  const isStep2Complete = advancingThirds.length === 8;
-
-  const isStep3Complete = knockoutPicks.r32.length === 16;
-
-  const isStep4Complete = knockoutPicks.r16.length === 8;
-
-  const isStep5Complete = knockoutPicks.qf.length === 4;
-
-  const isStep6Complete = knockoutPicks.sf.length === 2;
-
-  const isStep7Complete = knockoutPicks.third_place !== null && knockoutPicks.final !== null;
+  const isStep2Complete = knockoutPicks.r32.length === 16;
+  const isStep3Complete = knockoutPicks.r16.length === 8;
+  const isStep4Complete = knockoutPicks.qf.length === 4;
+  const isStep5Complete = knockoutPicks.sf.length === 2;
+  const isStep6Complete = knockoutPicks.third_place !== null && knockoutPicks.final !== null;
 
   const stepComplete = [
     isStep1Complete,
@@ -854,7 +934,6 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
     isStep4Complete,
     isStep5Complete,
     isStep6Complete,
-    isStep7Complete,
   ];
 
   const canGoNext = stepComplete[step - 1] ?? false;
@@ -864,12 +943,22 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
     setIsSubmitting(true);
     setSubmitError(null);
 
-    const gPicksInput: GroupPickInput[] = Object.entries(groupPicks).map(([group_name, p]) => ({
-      group_name,
-      picked_1st_id: p.first,
-      picked_2nd_id: p.second,
-      picked_3rd_id: p.third,
-    }));
+    const matchScorePicksInput: MatchScorePickInput[] = Object.entries(groupScores)
+      .filter(([, s]) => s.score1 !== null && s.score2 !== null)
+      .map(([match_id, s]) => ({
+        match_id,
+        predicted_score1: s.score1 as number,
+        predicted_score2: s.score2 as number,
+      }));
+
+    const derivedGroupPicksInput: GroupPickInput[] = Object.entries(derivedGroupPicks).map(
+      ([group_name, p]) => ({
+        group_name,
+        picked_1st_id: p.first,
+        picked_2nd_id: p.second,
+        picked_3rd_id: p.third,
+      })
+    );
 
     const kPicksJson: KnockoutPicksJson = {
       r32: knockoutPicks.r32,
@@ -880,7 +969,12 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
       final: knockoutPicks.final,
     };
 
-    const result = await submitBracket(bracketId, gPicksInput, kPicksJson);
+    const result = await submitBracket(
+      bracketId,
+      matchScorePicksInput,
+      kPicksJson,
+      derivedGroupPicksInput
+    );
 
     if (result.error) {
       setSubmitError(result.error);
@@ -898,10 +992,10 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-            Step {step} of 7 — {STEP_LABELS[step - 1]}
+            Step {step} of 6 — {STEP_LABELS[step - 1]}
           </span>
           <span className="text-xs text-slate-400">
-            {stepComplete.filter(Boolean).length}/7 steps complete
+            {stepComplete.filter(Boolean).length}/6 steps complete
           </span>
         </div>
         <StepIndicator currentStep={step} />
@@ -910,23 +1004,17 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
       {/* Step content */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4 sm:p-6">
         {step === 1 && (
-          <GroupStageStep
+          <GroupScoresStep
             groups={groups}
-            groupPicks={groupPicks}
-            onChange={handleGroupPickChange}
+            groupMatches={groupMatchInputs}
+            groupScores={groupScores}
+            allStandings={allStandings}
+            teamById={teamById}
+            onScoreChange={handleScoreChange}
           />
         )}
 
         {step === 2 && (
-          <BestThirdsStep
-            groupPicks={groupPicks}
-            teamById={teamById}
-            advancingThirds={advancingThirds}
-            onChange={setAdvancingThirds}
-          />
-        )}
-
-        {step === 3 && (
           <KnockoutStep
             roundLabel="Round of 32"
             roundKey="r32"
@@ -937,7 +1025,7 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
           />
         )}
 
-        {step === 4 && (
+        {step === 3 && (
           <KnockoutStep
             roundLabel="Round of 16"
             roundKey="r16"
@@ -948,7 +1036,7 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
           />
         )}
 
-        {step === 5 && (
+        {step === 4 && (
           <KnockoutStep
             roundLabel="Quarter-Finals"
             roundKey="qf"
@@ -959,7 +1047,7 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
           />
         )}
 
-        {step === 6 && (
+        {step === 5 && (
           <KnockoutStep
             roundLabel="Semi-Finals"
             roundKey="sf"
@@ -970,7 +1058,7 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
           />
         )}
 
-        {step === 7 && (
+        {step === 6 && (
           <FinalStep
             sfPicks={knockoutPicks.sf}
             thirdPlacePick={knockoutPicks.third_place}
@@ -1001,9 +1089,9 @@ export function BracketFillClient({ bracketId, poolId, teams }: BracketFillClien
           Previous
         </button>
 
-        {step < 7 && (
+        {step < 6 && (
           <button
-            onClick={() => setStep((s) => Math.min(7, s + 1))}
+            onClick={() => setStep((s) => Math.min(6, s + 1))}
             disabled={!canGoNext}
             className={cn(
               "rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",

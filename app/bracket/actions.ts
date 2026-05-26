@@ -9,6 +9,12 @@ export interface GroupPickInput {
   picked_3rd_id: string;
 }
 
+export interface MatchScorePickInput {
+  match_id: string;
+  predicted_score1: number;
+  predicted_score2: number;
+}
+
 export interface KnockoutMatchPick {
   match: number;
   winner_id: string;
@@ -25,8 +31,9 @@ export interface KnockoutPicksJson {
 
 export async function submitBracket(
   bracketId: string,
-  groupPicks: GroupPickInput[],
-  knockoutPicks: KnockoutPicksJson
+  matchScorePicks: MatchScorePickInput[],
+  knockoutPicks: KnockoutPicksJson,
+  derivedGroupPicks: GroupPickInput[]
 ): Promise<{ error?: string }> {
   const supabase = await createClient();
 
@@ -57,8 +64,28 @@ export async function submitBracket(
     return { error: "already submitted" };
   }
 
-  // Upsert all 12 group_picks rows
-  const groupPicksRows = groupPicks.map((gp) => ({
+  // Upsert 72 match_score_picks rows
+  const matchScoreRows = matchScorePicks.map((p) => ({
+    bracket_id: bracketId,
+    match_id: p.match_id,
+    predicted_score1: p.predicted_score1,
+    predicted_score2: p.predicted_score2,
+    points_earned: 0,
+  }));
+
+  const { error: mspError } = await supabase
+    .from("match_score_picks")
+    .upsert(matchScoreRows, {
+      onConflict: "bracket_id,match_id",
+      ignoreDuplicates: false,
+    });
+
+  if (mspError) {
+    return { error: mspError.message };
+  }
+
+  // Upsert 12 derived group_picks rows (for scoring engine + backwards compat)
+  const groupPicksRows = derivedGroupPicks.map((gp) => ({
     bracket_id: bracketId,
     group_name: gp.group_name,
     picked_1st_id: gp.picked_1st_id,

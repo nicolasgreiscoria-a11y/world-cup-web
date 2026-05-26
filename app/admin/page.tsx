@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
-import { triggerSync } from "./actions"
+import { triggerSync, updateMatchScore, applyScores } from "./actions"
 import type { Match } from "@/types/database"
 
 const ROUND_LABELS: Record<string, string> = {
@@ -114,22 +114,38 @@ export default async function AdminPage({
             </div>
           </div>
 
-          <form
-            action={async () => {
-              "use server"
-              await triggerSync()
-            }}
-          >
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 transition-colors"
+          <div className="flex flex-wrap gap-3">
+            <form
+              action={async () => {
+                "use server"
+                await triggerSync()
+              }}
             >
-              Sync Scores from football-data.org
-            </button>
-          </form>
+              <button
+                type="submit"
+                className="rounded-md bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 transition-colors"
+              >
+                Sync Scores from football-data.org
+              </button>
+            </form>
+            <form
+              action={async () => {
+                "use server"
+                await applyScores()
+              }}
+            >
+              <button
+                type="submit"
+                className="rounded-md border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                Apply Scores (no sync)
+              </button>
+            </form>
+          </div>
           <p className="mt-3 text-xs text-slate-400">
-            Pulls live results from the football-data.org API, updates match scores and group
-            standings, then recalculates all bracket points.
+            Sync pulls live results from the football-data.org API and recalculates all bracket
+            points. Apply Scores recalculates points using the current scores already in the
+            database.
           </p>
         </section>
 
@@ -168,10 +184,35 @@ export default async function AdminPage({
                             <td className="px-3 py-2.5 font-medium text-slate-800 text-right">
                               {m.team1?.name ?? "TBD"}
                             </td>
-                            <td className="px-3 py-2.5 text-center font-bold text-slate-900 tabular-nums w-20">
-                              {m.status === "scheduled"
-                                ? "vs"
-                                : `${m.score1 ?? "?"} - ${m.score2 ?? "?"}`}
+                            <td className="px-3 py-2.5 text-center">
+                              <form action={updateMatchScore} className="inline-flex items-center gap-1">
+                                <input type="hidden" name="matchId" value={m.id} />
+                                <input type="hidden" name="team1Id" value={m.team1_id ?? ""} />
+                                <input type="hidden" name="team2Id" value={m.team2_id ?? ""} />
+                                <input
+                                  type="number"
+                                  name="score1"
+                                  defaultValue={m.score1 ?? 0}
+                                  min={0}
+                                  max={20}
+                                  className="w-9 rounded border border-slate-300 text-center text-sm font-bold text-slate-900 tabular-nums focus:outline-none focus:ring-1 focus:ring-slate-400"
+                                />
+                                <span className="text-slate-400 font-bold">-</span>
+                                <input
+                                  type="number"
+                                  name="score2"
+                                  defaultValue={m.score2 ?? 0}
+                                  min={0}
+                                  max={20}
+                                  className="w-9 rounded border border-slate-300 text-center text-sm font-bold text-slate-900 tabular-nums focus:outline-none focus:ring-1 focus:ring-slate-400"
+                                />
+                                <button
+                                  type="submit"
+                                  className="ml-1 rounded bg-slate-900 px-2 py-0.5 text-xs font-semibold text-white hover:bg-slate-700 transition-colors"
+                                >
+                                  Set
+                                </button>
+                              </form>
                             </td>
                             <td className="px-3 py-2.5 font-medium text-slate-800">
                               {m.team2?.name ?? "TBD"}
@@ -194,9 +235,10 @@ export default async function AdminPage({
         <section className="rounded-xl border border-amber-200 bg-amber-50 p-6">
           <h2 className="mb-2 text-sm font-bold text-amber-900">Manual Overrides</h2>
           <p className="text-sm text-amber-800">
-            To manually correct a match score or standings entry, edit rows directly in the{" "}
-            <strong>Supabase dashboard</strong> under Table Editor. After editing, run a sync to
-            recalculate all bracket scores.
+            Use the score inputs in the match table above to set results directly. For draws in
+            knockout rounds where a penalty winner must be recorded, edit the{" "}
+            <strong>winner_id</strong> column directly in the Supabase dashboard, then click{" "}
+            <strong>Apply Scores (no sync)</strong> to recalculate.
           </p>
         </section>
       </div>
