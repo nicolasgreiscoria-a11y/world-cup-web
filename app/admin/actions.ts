@@ -10,9 +10,15 @@ async function requireAdmin() {
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  if (!user || user.email !== process.env.ADMIN_EMAIL) {
-    redirect("/")
-  }
+  if (!user) redirect("/")
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_admin")
+    .eq("id", user.id)
+    .single()
+
+  if (!profile?.is_admin) redirect("/")
 }
 
 export async function triggerSync() {
@@ -83,4 +89,30 @@ export async function applyScores() {
   }
 
   redirect(`/admin?synced=1&scores=${scoresUpdated}`)
+}
+
+export async function resetAllScores() {
+  await requireAdmin()
+
+  const supabase = await createAdminClient()
+
+  // Clear all match results
+  await supabase
+    .from("matches")
+    .update({ score1: null, score2: null, winner_id: null, status: "scheduled" })
+    .neq("status", "scheduled")
+
+  // Reset group standings
+  await supabase
+    .from("group_standings")
+    .update({ position: null, played: 0, wins: 0, draws: 0, losses: 0, goals_for: 0, goals_against: 0, points: 0 })
+    .gte("played", 0)
+
+  // Zero out all bracket points
+  await supabase.from("brackets").update({ total_points: 0 }).gte("total_points", 0)
+  await supabase.from("group_picks").update({ points_earned: 0 }).gte("points_earned", 0)
+  await supabase.from("bracket_picks").update({ points_earned: 0 }).gte("points_earned", 0)
+  await supabase.from("match_score_picks").update({ points_earned: 0 }).gte("points_earned", 0)
+
+  redirect("/admin?reset=1")
 }

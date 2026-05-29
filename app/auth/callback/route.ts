@@ -13,6 +13,11 @@ export async function GET(request: NextRequest) {
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
+
+    // Code was present but exchange failed (PKCE mismatch, already used, or
+    // opened in a different browser). Email is confirmed in Supabase — just
+    // send to login with a success message instead of an error.
+    return NextResponse.redirect(`${origin}/login?message=email_confirmed`);
   }
 
   return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`);

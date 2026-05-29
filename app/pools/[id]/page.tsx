@@ -101,14 +101,32 @@ export default async function PoolDetailPage({ params }: PoolDetailPageProps) {
             )}
           </div>
 
-          {canFillBracket && (
-            <Link
-              href={`/bracket/fill?pool=${id}`}
-              className="shrink-0 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 transition-colors"
-            >
-              Fill my bracket
-            </Link>
-          )}
+          <div className="flex flex-wrap gap-2 shrink-0">
+            {canFillBracket && (
+              <Link
+                href={`/bracket/fill?pool=${id}`}
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 transition-colors"
+              >
+                Fill my bracket
+              </Link>
+            )}
+            {myBracket?.submitted_at && (
+              <Link
+                href={`/pools/${id}/bracket`}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                View my bracket
+              </Link>
+            )}
+            {isLocked && memberUserIds.length > 1 && (
+              <Link
+                href={`/pools/${id}/compare`}
+                className="rounded-md border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+              >
+                Compare brackets
+              </Link>
+            )}
+          </div>
         </div>
 
         {/* Invite section */}

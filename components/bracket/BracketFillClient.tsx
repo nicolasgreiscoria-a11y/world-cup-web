@@ -14,14 +14,13 @@ import {
   type TeamStanding,
   type ScoreEntry,
   type GroupMatchInput,
-} from "@/lib/standingsComputer";
+} from "@/lib/standingsComputer"
+import { resolveThirdsAssignment, THIRD_COMBINATIONS, WINNER_GROUPS } from "@/lib/thirdCombinations";
+import { KnockoutBracketTree, type BracketMatch, type KnockoutRound } from "./KnockoutBracketTree";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-// Indexed by group_name, value is { first, second, third } team IDs (derived)
 type GroupPicks = Record<string, { first: string; second: string; third: string }>;
-
-// matchId → { score1, score2 }
 type GroupScores = Record<string, ScoreEntry>;
 
 // ─── R32 matchup definitions ───────────────────────────────────────────────
@@ -30,69 +29,40 @@ interface R32Slot {
   matchNum: number;
   labelA: string;
   labelB: string;
-  resolveA: (gp: GroupPicks, at: string[]) => string | null;
-  resolveB: (gp: GroupPicks, at: string[]) => string | null;
+  resolveA: (gp: GroupPicks) => string | null;
+  resolveB: (gp: GroupPicks) => string | null;
 }
 
-const R32_SLOTS: R32Slot[] = [
-  // Part A: Winners vs Advancing Thirds
-  {
-    matchNum: 1,
-    labelA: "Group A Winner",
-    labelB: "Advancing 3rd #1",
-    resolveA: (gp) => gp["A"]?.first ?? null,
-    resolveB: (_gp, at) => at[0] ?? null,
-  },
-  {
-    matchNum: 2,
-    labelA: "Group B Winner",
-    labelB: "Advancing 3rd #2",
-    resolveA: (gp) => gp["B"]?.first ?? null,
-    resolveB: (_gp, at) => at[1] ?? null,
-  },
+// Fixed R32 matchups (no advancing thirds involved) — official FIFA WC2026 bracket order
+const FIXED_R32_SLOTS: R32Slot[] = [
   {
     matchNum: 3,
-    labelA: "Group D Winner",
-    labelB: "Advancing 3rd #3",
-    resolveA: (gp) => gp["D"]?.first ?? null,
-    resolveB: (_gp, at) => at[2] ?? null,
+    labelA: "Group A Runner-up",
+    labelB: "Group B Runner-up",
+    resolveA: (gp) => gp["A"]?.second ?? null,
+    resolveB: (gp) => gp["B"]?.second ?? null,
   },
   {
     matchNum: 4,
-    labelA: "Group E Winner",
-    labelB: "Advancing 3rd #4",
-    resolveA: (gp) => gp["E"]?.first ?? null,
-    resolveB: (_gp, at) => at[3] ?? null,
+    labelA: "Group F Winner",
+    labelB: "Group C Runner-up",
+    resolveA: (gp) => gp["F"]?.first ?? null,
+    resolveB: (gp) => gp["C"]?.second ?? null,
   },
   {
     matchNum: 5,
-    labelA: "Group G Winner",
-    labelB: "Advancing 3rd #5",
-    resolveA: (gp) => gp["G"]?.first ?? null,
-    resolveB: (_gp, at) => at[4] ?? null,
+    labelA: "Group K Runner-up",
+    labelB: "Group L Runner-up",
+    resolveA: (gp) => gp["K"]?.second ?? null,
+    resolveB: (gp) => gp["L"]?.second ?? null,
   },
   {
     matchNum: 6,
-    labelA: "Group I Winner",
-    labelB: "Advancing 3rd #6",
-    resolveA: (gp) => gp["I"]?.first ?? null,
-    resolveB: (_gp, at) => at[5] ?? null,
+    labelA: "Group H Winner",
+    labelB: "Group J Runner-up",
+    resolveA: (gp) => gp["H"]?.first ?? null,
+    resolveB: (gp) => gp["J"]?.second ?? null,
   },
-  {
-    matchNum: 7,
-    labelA: "Group K Winner",
-    labelB: "Advancing 3rd #7",
-    resolveA: (gp) => gp["K"]?.first ?? null,
-    resolveB: (_gp, at) => at[6] ?? null,
-  },
-  {
-    matchNum: 8,
-    labelA: "Group L Winner",
-    labelB: "Advancing 3rd #8",
-    resolveA: (gp) => gp["L"]?.first ?? null,
-    resolveB: (_gp, at) => at[7] ?? null,
-  },
-  // Part B: Winners vs Runner-ups (cross-group)
   {
     matchNum: 9,
     labelA: "Group C Winner",
@@ -102,57 +72,32 @@ const R32_SLOTS: R32Slot[] = [
   },
   {
     matchNum: 10,
-    labelA: "Group F Winner",
-    labelB: "Group C Runner-up",
-    resolveA: (gp) => gp["F"]?.first ?? null,
-    resolveB: (gp) => gp["C"]?.second ?? null,
+    labelA: "Group E Runner-up",
+    labelB: "Group I Runner-up",
+    resolveA: (gp) => gp["E"]?.second ?? null,
+    resolveB: (gp) => gp["I"]?.second ?? null,
   },
   {
-    matchNum: 11,
+    matchNum: 13,
     labelA: "Group J Winner",
     labelB: "Group H Runner-up",
     resolveA: (gp) => gp["J"]?.first ?? null,
     resolveB: (gp) => gp["H"]?.second ?? null,
   },
   {
-    matchNum: 12,
-    labelA: "Group H Winner",
-    labelB: "Group J Runner-up",
-    resolveA: (gp) => gp["H"]?.first ?? null,
-    resolveB: (gp) => gp["J"]?.second ?? null,
-  },
-  // Part C: Runner-up vs Runner-up
-  {
-    matchNum: 13,
-    labelA: "Group A Runner-up",
-    labelB: "Group B Runner-up",
-    resolveA: (gp) => gp["A"]?.second ?? null,
-    resolveB: (gp) => gp["B"]?.second ?? null,
-  },
-  {
     matchNum: 14,
-    labelA: "Group G Runner-up",
-    labelB: "Group D Runner-up",
-    resolveA: (gp) => gp["G"]?.second ?? null,
-    resolveB: (gp) => gp["D"]?.second ?? null,
-  },
-  {
-    matchNum: 15,
-    labelA: "Group I Runner-up",
-    labelB: "Group E Runner-up",
-    resolveA: (gp) => gp["I"]?.second ?? null,
-    resolveB: (gp) => gp["E"]?.second ?? null,
-  },
-  {
-    matchNum: 16,
-    labelA: "Group K Runner-up",
-    labelB: "Group L Runner-up",
-    resolveA: (gp) => gp["K"]?.second ?? null,
-    resolveB: (gp) => gp["L"]?.second ?? null,
+    labelA: "Group D Runner-up",
+    labelB: "Group G Runner-up",
+    resolveA: (gp) => gp["D"]?.second ?? null,
+    resolveB: (gp) => gp["G"]?.second ?? null,
   },
 ];
 
-// Pair up R32 results into R16, QF, SF, Final
+// matchNum in the official bracket for each WINNER_GROUPS[i] winner-vs-third slot
+// WINNER_GROUPS = ["A", "B", "D", "E", "G", "I", "K", "L"]
+// index:             0    1    2    3    4    5    6    7
+const WINNER_THIRD_MATCH_NUMS = [11, 15, 7, 1, 8, 2, 16, 12] as const;
+
 function pairWinners(winners: (string | null)[]): { a: string | null; b: string | null }[] {
   const pairs: { a: string | null; b: string | null }[] = [];
   for (let i = 0; i < winners.length; i += 2) {
@@ -179,109 +124,9 @@ function FlagImg({ countryCode, name }: { countryCode: string; name: string }) {
   );
 }
 
-interface MatchCardProps {
-  matchNum: number;
-  teamA: Team | null;
-  teamB: Team | null;
-  labelA: string;
-  labelB: string;
-  winnerId: string | null;
-  onPick: (teamId: string) => void;
-  round: string;
-}
-
-function MatchCard({ matchNum, teamA, teamB, labelA, labelB, winnerId, onPick, round }: MatchCardProps) {
-  const isComplete = winnerId !== null;
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      <div className="px-3 py-1.5 bg-slate-50 border-b border-slate-100">
-        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-          {round} &middot; Match {matchNum}
-        </span>
-      </div>
-      <div className="p-2 space-y-1.5">
-        {/* Team A */}
-        <button
-          onClick={() => teamA && onPick(teamA.id)}
-          disabled={!teamA}
-          className={cn(
-            "w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-all",
-            teamA
-              ? winnerId === teamA.id
-                ? "border-2 border-blue-500 bg-blue-50"
-                : isComplete
-                ? "border border-slate-100 bg-white opacity-50 hover:opacity-75"
-                : "border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 cursor-pointer"
-              : "border border-dashed border-slate-200 bg-slate-50 cursor-not-allowed"
-          )}
-        >
-          {teamA ? (
-            <>
-              <FlagImg countryCode={teamA.country_code} name={teamA.name} />
-              <span className={cn("text-sm font-medium", winnerId === teamA.id ? "text-blue-700" : "text-slate-800")}>
-                {teamA.name}
-              </span>
-              {winnerId === teamA.id && (
-                <span className="ml-auto text-xs font-bold text-blue-600">WIN</span>
-              )}
-            </>
-          ) : (
-            <span className="text-xs text-slate-400 italic">{labelA}</span>
-          )}
-        </button>
-
-        {/* VS divider */}
-        <div className="flex items-center gap-2 px-2">
-          <div className="flex-1 h-px bg-slate-100" />
-          <span className="text-xs font-semibold text-slate-300">VS</span>
-          <div className="flex-1 h-px bg-slate-100" />
-        </div>
-
-        {/* Team B */}
-        <button
-          onClick={() => teamB && onPick(teamB.id)}
-          disabled={!teamB}
-          className={cn(
-            "w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-all",
-            teamB
-              ? winnerId === teamB.id
-                ? "border-2 border-blue-500 bg-blue-50"
-                : isComplete
-                ? "border border-slate-100 bg-white opacity-50 hover:opacity-75"
-                : "border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 cursor-pointer"
-              : "border border-dashed border-slate-200 bg-slate-50 cursor-not-allowed"
-          )}
-        >
-          {teamB ? (
-            <>
-              <FlagImg countryCode={teamB.country_code} name={teamB.name} />
-              <span className={cn("text-sm font-medium", winnerId === teamB.id ? "text-blue-700" : "text-slate-800")}>
-                {teamB.name}
-              </span>
-              {winnerId === teamB.id && (
-                <span className="ml-auto text-xs font-bold text-blue-600">WIN</span>
-              )}
-            </>
-          ) : (
-            <span className="text-xs text-slate-400 italic">{labelB}</span>
-          )}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Step Indicator ────────────────────────────────────────────────────────
 
-const STEP_LABELS = [
-  "Group Scores",
-  "Round of 32",
-  "Round of 16",
-  "Quarter-Finals",
-  "Semi-Finals",
-  "Final",
-];
+const STEP_LABELS = ["Group Scores", "Knockout Bracket"];
 
 function StepIndicator({ currentStep }: { currentStep: number }) {
   return (
@@ -396,7 +241,6 @@ function GroupScoresStep({
 
           return (
             <div key={grp} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              {/* Accordion header */}
               <button
                 onClick={() => setOpenGroup(isOpen ? null : grp)}
                 className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 transition-colors"
@@ -419,10 +263,8 @@ function GroupScoresStep({
                 </svg>
               </button>
 
-              {/* Accordion body */}
               {isOpen && (
                 <div className="px-4 pb-4 space-y-4 border-t border-slate-100">
-                  {/* Match score inputs */}
                   <div className="space-y-2 pt-3">
                     {matches.map((m) => {
                       const team1 = teamById.get(m.team1_id);
@@ -431,7 +273,6 @@ function GroupScoresStep({
 
                       return (
                         <div key={m.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                          {/* Team 1 */}
                           <div className="flex items-center gap-1.5 flex-1 min-w-0">
                             {team1 && <FlagImg countryCode={team1.country_code} name={team1.name} />}
                             <span className="text-sm font-medium text-slate-800 truncate">
@@ -439,7 +280,6 @@ function GroupScoresStep({
                             </span>
                           </div>
 
-                          {/* Score inputs */}
                           <div className="flex items-center gap-1.5 shrink-0">
                             <input
                               type="number"
@@ -468,7 +308,6 @@ function GroupScoresStep({
                             />
                           </div>
 
-                          {/* Team 2 */}
                           <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
                             <span className="text-sm font-medium text-slate-800 truncate text-right">
                               {team2?.name ?? "TBD"}
@@ -480,7 +319,6 @@ function GroupScoresStep({
                     })}
                   </div>
 
-                  {/* Live standings preview */}
                   {standings.length > 0 && (
                     <div>
                       <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Predicted Standings</p>
@@ -557,187 +395,6 @@ function GroupScoresStep({
   );
 }
 
-// ─── Knockout Round Step ───────────────────────────────────────────────────
-
-interface KnockoutStepProps {
-  roundLabel: string;
-  roundKey: keyof KnockoutPicksJson;
-  matchups: { matchNum: number; teamAId: string | null; teamBId: string | null; labelA: string; labelB: string }[];
-  picks: KnockoutMatchPick[];
-  teamById: Map<string, Team>;
-  onPick: (roundKey: keyof KnockoutPicksJson, matchNum: number, winnerId: string) => void;
-}
-
-function KnockoutStep({ roundLabel, roundKey, matchups, picks, teamById, onPick }: KnockoutStepProps) {
-  const pickMap = new Map(picks.map((p) => [p.match, p.winner_id]));
-
-  const pickedCount = matchups.filter((m) => pickMap.has(m.matchNum)).length;
-  const total = matchups.length;
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-bold text-slate-800">{roundLabel}</h2>
-        <p className={cn("text-sm font-semibold mt-1", pickedCount === total ? "text-green-600" : "text-amber-600")}>
-          {pickedCount}/{total} matches picked
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {matchups.map((m) => {
-          const teamA = m.teamAId ? teamById.get(m.teamAId) ?? null : null;
-          const teamB = m.teamBId ? teamById.get(m.teamBId) ?? null : null;
-          const winnerId = pickMap.get(m.matchNum) ?? null;
-
-          return (
-            <MatchCard
-              key={m.matchNum}
-              matchNum={m.matchNum}
-              teamA={teamA}
-              teamB={teamB}
-              labelA={m.labelA}
-              labelB={m.labelB}
-              winnerId={winnerId}
-              round={roundLabel}
-              onPick={(teamId) => onPick(roundKey, m.matchNum, teamId)}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ─── Final Step ─────────────────────────────────────────────────────────────
-
-interface FinalStepProps {
-  sfPicks: KnockoutMatchPick[];
-  thirdPlacePick: { winner_id: string } | null;
-  finalPick: { winner_id: string } | null;
-  teamById: Map<string, Team>;
-  sfMatchups: { matchNum: number; teamAId: string | null; teamBId: string | null }[];
-  onPickThirdPlace: (winnerId: string) => void;
-  onPickFinal: (winnerId: string) => void;
-  onSubmit: () => void;
-  isSubmitting: boolean;
-  submitError: string | null;
-}
-
-function FinalStep({
-  sfPicks,
-  thirdPlacePick,
-  finalPick,
-  teamById,
-  sfMatchups,
-  onPickThirdPlace,
-  onPickFinal,
-  onSubmit,
-  isSubmitting,
-  submitError,
-}: FinalStepProps) {
-  const sfPickMap = new Map(sfPicks.map((p) => [p.match, p.winner_id]));
-
-  const finalist1 = sfPickMap.get(1) ? teamById.get(sfPickMap.get(1)!) ?? null : null;
-  const finalist2 = sfPickMap.get(2) ? teamById.get(sfPickMap.get(2)!) ?? null : null;
-
-  const sfMatch1 = sfMatchups[0];
-  const sfMatch2 = sfMatchups[1];
-
-  const sf1Winner = sfPickMap.get(1);
-  const sf2Winner = sfPickMap.get(2);
-
-  const sf1Loser = sf1Winner
-    ? sf1Winner === sfMatch1?.teamAId
-      ? sfMatch1.teamBId
-      : sfMatch1?.teamAId
-    : null;
-
-  const sf2Loser = sf2Winner
-    ? sf2Winner === sfMatch2?.teamAId
-      ? sfMatch2.teamBId
-      : sfMatch2?.teamAId
-    : null;
-
-  const thirdA = sf1Loser ? teamById.get(sf1Loser) ?? null : null;
-  const thirdB = sf2Loser ? teamById.get(sf2Loser) ?? null : null;
-
-  const champion = finalPick?.winner_id ? teamById.get(finalPick.winner_id) ?? null : null;
-
-  const canSubmit = thirdPlacePick !== null && finalPick !== null;
-
-  return (
-    <div className="space-y-8">
-      <div>
-        <h2 className="text-lg font-bold text-slate-800">Step 6: Final + 3rd Place</h2>
-        <p className="text-sm text-slate-500 mt-0.5">Pick your champion and the 3rd place winner.</p>
-      </div>
-
-      {/* 3rd Place Match */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-bold text-slate-600 uppercase tracking-wide">3rd Place Match</h3>
-        <MatchCard
-          matchNum={1}
-          teamA={thirdA}
-          teamB={thirdB}
-          labelA="SF Match 1 Loser"
-          labelB="SF Match 2 Loser"
-          winnerId={thirdPlacePick?.winner_id ?? null}
-          round="3rd Place"
-          onPick={onPickThirdPlace}
-        />
-      </div>
-
-      {/* Final */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-bold text-slate-600 uppercase tracking-wide">Final</h3>
-        <MatchCard
-          matchNum={1}
-          teamA={finalist1}
-          teamB={finalist2}
-          labelA="SF Match 1 Winner"
-          labelB="SF Match 2 Winner"
-          winnerId={finalPick?.winner_id ?? null}
-          round="Final"
-          onPick={onPickFinal}
-        />
-      </div>
-
-      {/* Champion display */}
-      {champion && (
-        <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-6 text-center">
-          <p className="text-xs font-bold text-amber-600 uppercase tracking-widest mb-2">Your Champion</p>
-          <div className="flex items-center justify-center gap-3">
-            <FlagImg countryCode={champion.country_code} name={champion.name} />
-            <span className="text-2xl font-extrabold text-amber-800">{champion.name}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Submit */}
-      <div className="space-y-3 pt-4 border-t border-slate-200">
-        {submitError && (
-          <p className="text-sm text-red-600 font-medium">{submitError}</p>
-        )}
-        <button
-          onClick={onSubmit}
-          disabled={!canSubmit || isSubmitting}
-          className={cn(
-            "w-full rounded-xl px-6 py-3 text-base font-bold transition-all",
-            canSubmit && !isSubmitting
-              ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
-              : "bg-slate-200 text-slate-400 cursor-not-allowed"
-          )}
-        >
-          {isSubmitting ? "Submitting..." : "Submit My Bracket"}
-        </button>
-        <p className="text-xs text-center text-slate-400">
-          Once submitted, your bracket cannot be changed.
-        </p>
-      </div>
-    </div>
-  );
-}
-
 // ─── Main Component ────────────────────────────────────────────────────────
 
 interface BracketFillClientProps {
@@ -750,7 +407,6 @@ interface BracketFillClientProps {
 export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: BracketFillClientProps) {
   const router = useRouter();
 
-  // Build lookup maps
   const teamById = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
   const groups = useMemo(() => {
     const g: Record<string, Team[]> = {};
@@ -767,7 +423,7 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
   );
 
   // ─── State ──────────────────────────────────────────────────────────────
-  const [step, setStep] = useState(1); // 1–6
+  const [step, setStep] = useState(1); // 1–2
   const [groupScores, setGroupScores] = useState<GroupScores>({});
 
   const [knockoutPicks, setKnockoutPicks] = useState<{
@@ -805,6 +461,11 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
     return computeBestThirds(thirds);
   }, [allStandings, teams]);
 
+  const { assignment: thirdsAssignment, key: thirdsKey } = useMemo(
+    () => resolveThirdsAssignment(advancingThirds),
+    [advancingThirds]
+  );
+
   // ─── Score change handler ────────────────────────────────────────────
   const handleScoreChange = useCallback(
     (matchId: string, score1: number | null, score2: number | null) => {
@@ -816,7 +477,6 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
         }
         return { ...prev, [matchId]: { score1, score2 } };
       });
-      // Changing group scores invalidates knockout picks since teams may shift
       setKnockoutPicks({ r32: [], r16: [], qf: [], sf: [], third_place: null, final: null });
     },
     []
@@ -824,16 +484,21 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
 
   // ─── Knockout pick handler ───────────────────────────────────────────
   const handleKnockoutPick = useCallback(
-    (roundKey: keyof typeof knockoutPicks, matchNum: number, winnerId: string) => {
+    (roundKey: KnockoutRound, matchNum: number, winnerId: string) => {
       setKnockoutPicks((prev) => {
         if (roundKey === "third_place") {
+          if (prev.third_place?.winner_id === winnerId) return prev;
           return { ...prev, third_place: { winner_id: winnerId } };
         }
         if (roundKey === "final") {
+          if (prev.final?.winner_id === winnerId) return prev;
           return { ...prev, final: { winner_id: winnerId } };
         }
 
         const roundPicks = prev[roundKey] as KnockoutMatchPick[];
+        const existing = roundPicks.find((p) => p.match === matchNum);
+        if (existing?.winner_id === winnerId) return prev;
+
         const updated = roundPicks.filter((p) => p.match !== matchNum);
         updated.push({ match: matchNum, winner_id: winnerId });
 
@@ -865,52 +530,178 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
     []
   );
 
-  // ─── Derive R32 matchups (using computed standings) ─────────────────
-  const r32Matchups = useMemo(
-    () =>
-      R32_SLOTS.map((slot) => ({
-        matchNum: slot.matchNum,
-        labelA: slot.labelA,
-        labelB: slot.labelB,
-        teamAId: slot.resolveA(derivedGroupPicks, advancingThirds),
-        teamBId: slot.resolveB(derivedGroupPicks, advancingThirds),
-      })),
-    [derivedGroupPicks, advancingThirds]
+  // ─── Derive R32 matchups ─────────────────────────────────────────────
+  const r32Matchups = useMemo(() => {
+    const winnerVsThird = WINNER_GROUPS.map((winnerGroup, i) => {
+      const thirdGroup = thirdsKey ? (THIRD_COMBINATIONS[thirdsKey]?.[i] ?? null) : null;
+      return {
+        matchNum: WINNER_THIRD_MATCH_NUMS[i],
+        labelA: `Group ${winnerGroup} Winner`,
+        labelB: thirdGroup ? `3rd Group ${thirdGroup}` : "Advancing 3rd",
+        teamAId: derivedGroupPicks[winnerGroup]?.first ?? null,
+        teamBId: thirdsAssignment[i] ?? null,
+      };
+    });
+    const fixed = FIXED_R32_SLOTS.map((slot) => ({
+      matchNum: slot.matchNum,
+      labelA: slot.labelA,
+      labelB: slot.labelB,
+      teamAId: slot.resolveA(derivedGroupPicks),
+      teamBId: slot.resolveB(derivedGroupPicks),
+    }));
+    return [...winnerVsThird, ...fixed].sort((a, b) => a.matchNum - b.matchNum);
+  }, [derivedGroupPicks, thirdsAssignment, thirdsKey]);
+
+  // ─── Derive downstream matchups ──────────────────────────────────────
+  const r32PickMap = useMemo(
+    () => new Map(knockoutPicks.r32.map((p) => [p.match, p.winner_id])),
+    [knockoutPicks.r32]
+  );
+  const r16PickMap = useMemo(
+    () => new Map(knockoutPicks.r16.map((p) => [p.match, p.winner_id])),
+    [knockoutPicks.r16]
+  );
+  const qfPickMap = useMemo(
+    () => new Map(knockoutPicks.qf.map((p) => [p.match, p.winner_id])),
+    [knockoutPicks.qf]
+  );
+  const sfPickMap = useMemo(
+    () => new Map(knockoutPicks.sf.map((p) => [p.match, p.winner_id])),
+    [knockoutPicks.sf]
   );
 
-  // ─── Derive R16/QF/SF matchups ───────────────────────────────────────
-  const r32PickMap = new Map(knockoutPicks.r32.map((p) => [p.match, p.winner_id]));
-  const r32Winners = Array.from({ length: 16 }, (_, i) => r32PickMap.get(i + 1) ?? null);
-  const r16Pairs = pairWinners(r32Winners);
-  const r16Matchups = r16Pairs.map((pair, i) => ({
-    matchNum: i + 1,
-    labelA: `R32 Match ${i * 2 + 1} Winner`,
-    labelB: `R32 Match ${i * 2 + 2} Winner`,
-    teamAId: pair.a,
-    teamBId: pair.b,
-  }));
+  const r16Matchups = useMemo(() => {
+    const r32Winners = Array.from({ length: 16 }, (_, i) => r32PickMap.get(i + 1) ?? null);
+    return pairWinners(r32Winners).map((pair, i) => ({
+      matchNum: i + 1,
+      labelA: `R32 Match ${i * 2 + 1} Winner`,
+      labelB: `R32 Match ${i * 2 + 2} Winner`,
+      teamAId: pair.a,
+      teamBId: pair.b,
+    }));
+  }, [r32PickMap]);
 
-  const r16PickMap = new Map(knockoutPicks.r16.map((p) => [p.match, p.winner_id]));
-  const r16Winners = Array.from({ length: 8 }, (_, i) => r16PickMap.get(i + 1) ?? null);
-  const qfPairs = pairWinners(r16Winners);
-  const qfMatchups = qfPairs.map((pair, i) => ({
-    matchNum: i + 1,
-    labelA: `R16 Match ${i * 2 + 1} Winner`,
-    labelB: `R16 Match ${i * 2 + 2} Winner`,
-    teamAId: pair.a,
-    teamBId: pair.b,
-  }));
+  const qfMatchups = useMemo(() => {
+    const r16Winners = Array.from({ length: 8 }, (_, i) => r16PickMap.get(i + 1) ?? null);
+    return pairWinners(r16Winners).map((pair, i) => ({
+      matchNum: i + 1,
+      labelA: `R16 Match ${i * 2 + 1} Winner`,
+      labelB: `R16 Match ${i * 2 + 2} Winner`,
+      teamAId: pair.a,
+      teamBId: pair.b,
+    }));
+  }, [r16PickMap]);
 
-  const qfPickMap = new Map(knockoutPicks.qf.map((p) => [p.match, p.winner_id]));
-  const qfWinners = Array.from({ length: 4 }, (_, i) => qfPickMap.get(i + 1) ?? null);
-  const sfPairs = pairWinners(qfWinners);
-  const sfMatchups = sfPairs.map((pair, i) => ({
-    matchNum: i + 1,
-    labelA: `QF Match ${i * 2 + 1} Winner`,
-    labelB: `QF Match ${i * 2 + 2} Winner`,
-    teamAId: pair.a,
-    teamBId: pair.b,
-  }));
+  const sfMatchups = useMemo(() => {
+    const qfWinners = Array.from({ length: 4 }, (_, i) => qfPickMap.get(i + 1) ?? null);
+    return pairWinners(qfWinners).map((pair, i) => ({
+      matchNum: i + 1,
+      labelA: `QF Match ${i * 2 + 1} Winner`,
+      labelB: `QF Match ${i * 2 + 2} Winner`,
+      teamAId: pair.a,
+      teamBId: pair.b,
+    }));
+  }, [qfPickMap]);
+
+  // ─── Build BracketMatch arrays for the tree ──────────────────────────
+  const toTeam = useCallback(
+    (id: string | null | undefined) => (id ? teamById.get(id) ?? null : null),
+    [teamById]
+  );
+
+  const r32TreeMatches = useMemo<BracketMatch[]>(
+    () => r32Matchups.map((m) => ({
+      matchNum: m.matchNum,
+      teamA: toTeam(m.teamAId),
+      teamB: toTeam(m.teamBId),
+      labelA: m.labelA,
+      labelB: m.labelB,
+      winnerId: r32PickMap.get(m.matchNum) ?? null,
+    })),
+    [r32Matchups, r32PickMap, toTeam]
+  );
+
+  const r16TreeMatches = useMemo<BracketMatch[]>(
+    () => r16Matchups.map((m) => ({
+      matchNum: m.matchNum,
+      teamA: toTeam(m.teamAId),
+      teamB: toTeam(m.teamBId),
+      labelA: m.labelA,
+      labelB: m.labelB,
+      winnerId: r16PickMap.get(m.matchNum) ?? null,
+    })),
+    [r16Matchups, r16PickMap, toTeam]
+  );
+
+  const qfTreeMatches = useMemo<BracketMatch[]>(
+    () => qfMatchups.map((m) => ({
+      matchNum: m.matchNum,
+      teamA: toTeam(m.teamAId),
+      teamB: toTeam(m.teamBId),
+      labelA: m.labelA,
+      labelB: m.labelB,
+      winnerId: qfPickMap.get(m.matchNum) ?? null,
+    })),
+    [qfMatchups, qfPickMap, toTeam]
+  );
+
+  const sfTreeMatches = useMemo<BracketMatch[]>(
+    () => sfMatchups.map((m) => ({
+      matchNum: m.matchNum,
+      teamA: toTeam(m.teamAId),
+      teamB: toTeam(m.teamBId),
+      labelA: m.labelA,
+      labelB: m.labelB,
+      winnerId: sfPickMap.get(m.matchNum) ?? null,
+    })),
+    [sfMatchups, sfPickMap, toTeam]
+  );
+
+  const finalTreeMatch = useMemo<BracketMatch>(() => {
+    const sf1 = sfMatchups[0];
+    const sf2 = sfMatchups[1];
+    return {
+      matchNum: 1,
+      teamA: toTeam(sfPickMap.get(1)),
+      teamB: toTeam(sfPickMap.get(2)),
+      labelA: sf1 ? `SF ${sf1.matchNum} Winner` : "SF 1 Winner",
+      labelB: sf2 ? `SF ${sf2.matchNum} Winner` : "SF 2 Winner",
+      winnerId: knockoutPicks.final?.winner_id ?? null,
+    };
+  }, [sfMatchups, sfPickMap, knockoutPicks.final, toTeam]);
+
+  const thirdPlaceTreeMatch = useMemo<BracketMatch>(() => {
+    const sf1 = sfMatchups[0];
+    const sf2 = sfMatchups[1];
+    const sf1WinnerId = sfPickMap.get(1);
+    const sf2WinnerId = sfPickMap.get(2);
+    const sf1LoserId = sf1WinnerId
+      ? sf1WinnerId === sf1?.teamAId ? sf1?.teamBId : sf1?.teamAId
+      : null;
+    const sf2LoserId = sf2WinnerId
+      ? sf2WinnerId === sf2?.teamAId ? sf2?.teamBId : sf2?.teamAId
+      : null;
+    return {
+      matchNum: 1,
+      teamA: toTeam(sf1LoserId),
+      teamB: toTeam(sf2LoserId),
+      labelA: "SF 1 Loser",
+      labelB: "SF 2 Loser",
+      winnerId: knockoutPicks.third_place?.winner_id ?? null,
+    };
+  }, [sfMatchups, sfPickMap, knockoutPicks.third_place, toTeam]);
+
+  // ─── Knockout picks progress ─────────────────────────────────────────
+  const knockoutProgress = useMemo(() => ({
+    r32: knockoutPicks.r32.length,
+    r16: knockoutPicks.r16.length,
+    qf: knockoutPicks.qf.length,
+    sf: knockoutPicks.sf.length,
+    thirdPlace: knockoutPicks.third_place !== null ? 1 : 0,
+    final: knockoutPicks.final !== null ? 1 : 0,
+    total: knockoutPicks.r32.length + knockoutPicks.r16.length + knockoutPicks.qf.length +
+      knockoutPicks.sf.length + (knockoutPicks.third_place !== null ? 1 : 0) + (knockoutPicks.final !== null ? 1 : 0),
+  }), [knockoutPicks]);
 
   // ─── Validation ─────────────────────────────────────────────────────
   const isStep1Complete = useMemo(() => {
@@ -921,21 +712,15 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
       });
   }, [groupMatchInputs, groupScores]);
 
-  const isStep2Complete = knockoutPicks.r32.length === 16;
-  const isStep3Complete = knockoutPicks.r16.length === 8;
-  const isStep4Complete = knockoutPicks.qf.length === 4;
-  const isStep5Complete = knockoutPicks.sf.length === 2;
-  const isStep6Complete = knockoutPicks.third_place !== null && knockoutPicks.final !== null;
+  const isStep2Complete =
+    knockoutPicks.r32.length === 16 &&
+    knockoutPicks.r16.length === 8 &&
+    knockoutPicks.qf.length === 4 &&
+    knockoutPicks.sf.length === 2 &&
+    knockoutPicks.third_place !== null &&
+    knockoutPicks.final !== null;
 
-  const stepComplete = [
-    isStep1Complete,
-    isStep2Complete,
-    isStep3Complete,
-    isStep4Complete,
-    isStep5Complete,
-    isStep6Complete,
-  ];
-
+  const stepComplete = [isStep1Complete, isStep2Complete];
   const canGoNext = stepComplete[step - 1] ?? false;
 
   // ─── Submit ──────────────────────────────────────────────────────────
@@ -967,6 +752,7 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
       sf: knockoutPicks.sf,
       third_place: knockoutPicks.third_place,
       final: knockoutPicks.final,
+      thirds_key: thirdsKey ?? undefined,
     };
 
     const result = await submitBracket(
@@ -982,7 +768,7 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
       return;
     }
 
-    router.push(`/pools/${poolId}`);
+    router.push(`/pools/${poolId}/bracket`);
   };
 
   // ─── Render ──────────────────────────────────────────────────────────
@@ -992,90 +778,59 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-            Step {step} of 6 — {STEP_LABELS[step - 1]}
+            Step {step} of 2 — {STEP_LABELS[step - 1]}
           </span>
           <span className="text-xs text-slate-400">
-            {stepComplete.filter(Boolean).length}/6 steps complete
+            {stepComplete.filter(Boolean).length}/2 steps complete
           </span>
         </div>
         <StepIndicator currentStep={step} />
       </div>
 
       {/* Step content */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4 sm:p-6">
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         {step === 1 && (
-          <GroupScoresStep
-            groups={groups}
-            groupMatches={groupMatchInputs}
-            groupScores={groupScores}
-            allStandings={allStandings}
-            teamById={teamById}
-            onScoreChange={handleScoreChange}
-          />
+          <div className="p-4 sm:p-6">
+            <GroupScoresStep
+              groups={groups}
+              groupMatches={groupMatchInputs}
+              groupScores={groupScores}
+              allStandings={allStandings}
+              teamById={teamById}
+              onScoreChange={handleScoreChange}
+            />
+          </div>
         )}
 
         {step === 2 && (
-          <KnockoutStep
-            roundLabel="Round of 32"
-            roundKey="r32"
-            matchups={r32Matchups}
-            picks={knockoutPicks.r32}
-            teamById={teamById}
-            onPick={handleKnockoutPick}
-          />
-        )}
-
-        {step === 3 && (
-          <KnockoutStep
-            roundLabel="Round of 16"
-            roundKey="r16"
-            matchups={r16Matchups}
-            picks={knockoutPicks.r16}
-            teamById={teamById}
-            onPick={handleKnockoutPick}
-          />
-        )}
-
-        {step === 4 && (
-          <KnockoutStep
-            roundLabel="Quarter-Finals"
-            roundKey="qf"
-            matchups={qfMatchups}
-            picks={knockoutPicks.qf}
-            teamById={teamById}
-            onPick={handleKnockoutPick}
-          />
-        )}
-
-        {step === 5 && (
-          <KnockoutStep
-            roundLabel="Semi-Finals"
-            roundKey="sf"
-            matchups={sfMatchups}
-            picks={knockoutPicks.sf}
-            teamById={teamById}
-            onPick={handleKnockoutPick}
-          />
-        )}
-
-        {step === 6 && (
-          <FinalStep
-            sfPicks={knockoutPicks.sf}
-            thirdPlacePick={knockoutPicks.third_place}
-            finalPick={knockoutPicks.final}
-            teamById={teamById}
-            sfMatchups={sfMatchups}
-            onPickThirdPlace={(id) => handleKnockoutPick("third_place" as keyof KnockoutPicksJson, 0, id)}
-            onPickFinal={(id) => handleKnockoutPick("final" as keyof KnockoutPicksJson, 0, id)}
-            onSubmit={handleSubmit}
-            isSubmitting={isSubmitting}
-            submitError={submitError}
-          />
+          <>
+            <div className="px-4 pt-4 pb-2 sm:px-6 sm:pt-6">
+              <h2 className="text-lg font-bold text-slate-800">Step 2: Knockout Bracket</h2>
+              <p className="text-sm text-slate-500 mt-0.5">
+                Click any team to advance them. Picks cascade automatically through each round.
+              </p>
+              <p className={cn(
+                "text-sm font-semibold mt-2",
+                isStep2Complete ? "text-green-600" : "text-amber-600"
+              )}>
+                {knockoutProgress.total}/32 picks made
+              </p>
+            </div>
+            <KnockoutBracketTree
+              r32={r32TreeMatches}
+              r16={r16TreeMatches}
+              qf={qfTreeMatches}
+              sf={sfTreeMatches}
+              final={finalTreeMatch}
+              thirdPlace={thirdPlaceTreeMatch}
+              onPick={handleKnockoutPick}
+            />
+          </>
         )}
       </div>
 
       {/* Navigation */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <button
           onClick={() => setStep((s) => Math.max(1, s - 1))}
           disabled={step === 1}
@@ -1089,9 +844,9 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
           Previous
         </button>
 
-        {step < 6 && (
+        {step < 2 && (
           <button
-            onClick={() => setStep((s) => Math.min(6, s + 1))}
+            onClick={() => setStep((s) => Math.min(2, s + 1))}
             disabled={!canGoNext}
             className={cn(
               "rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",
@@ -1102,6 +857,29 @@ export function BracketFillClient({ bracketId, poolId, teams, groupMatches }: Br
           >
             Next
           </button>
+        )}
+
+        {step === 2 && (
+          <div className="flex flex-col items-end gap-2">
+            {submitError && (
+              <p className="text-sm text-red-600 font-medium">{submitError}</p>
+            )}
+            <button
+              onClick={handleSubmit}
+              disabled={!isStep2Complete || isSubmitting}
+              className={cn(
+                "rounded-xl px-6 py-3 text-base font-bold transition-all",
+                isStep2Complete && !isSubmitting
+                  ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
+                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
+              )}
+            >
+              {isSubmitting ? "Submitting..." : "Submit My Bracket"}
+            </button>
+            {!isStep2Complete && (
+              <p className="text-xs text-slate-400">Complete all picks to submit</p>
+            )}
+          </div>
         )}
       </div>
     </div>

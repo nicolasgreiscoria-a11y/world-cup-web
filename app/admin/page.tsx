@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { triggerSync, updateMatchScore, applyScores } from "./actions"
+import { ResetScoresButton } from "./ResetScoresButton"
 import type { Match } from "@/types/database"
 
 const ROUND_LABELS: Record<string, string> = {
@@ -29,12 +30,19 @@ export default async function AdminPage({
     redirect("/login")
   }
 
-  if (user.email !== process.env.ADMIN_EMAIL) {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_admin")
+    .eq("id", user.id)
+    .single()
+
+  if (!profile?.is_admin) {
     redirect("/")
   }
 
   const params = await searchParams
   const syncedParam = params.synced === "1"
+  const resetParam = params.reset === "1"
   const errorParam = typeof params.error === "string" ? params.error : null
   const teamsParam = typeof params.teams === "string" ? Number(params.teams) : null
   const matchesParam = typeof params.matches === "string" ? Number(params.matches) : null
@@ -81,7 +89,7 @@ export default async function AdminPage({
           <p className="mt-1 text-sm text-slate-500">World Cup 2026 management</p>
         </div>
 
-        {/* Sync result banner */}
+        {/* Banners */}
         {syncedParam && (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-800">
             <strong>Sync complete.</strong>{" "}
@@ -90,9 +98,14 @@ export default async function AdminPage({
             {scoresParam !== null && `${scoresParam} bracket scores recalculated.`}
           </div>
         )}
+        {resetParam && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-800">
+            <strong>Reset complete.</strong> All match results cleared and bracket scores set to 0.
+          </div>
+        )}
         {errorParam && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800">
-            <strong>Sync failed:</strong> {errorParam}
+            <strong>Error:</strong> {errorParam}
           </div>
         )}
 
@@ -229,6 +242,16 @@ export default async function AdminPage({
               })}
             </div>
           )}
+        </section>
+
+        {/* Danger zone */}
+        <section className="rounded-xl border border-red-200 bg-red-50 p-6">
+          <h2 className="mb-2 text-sm font-bold text-red-900">Danger Zone</h2>
+          <p className="mb-4 text-sm text-red-800">
+            Clears all match results, group standings, and resets every bracket score to 0.
+            Use this to start fresh before the tournament begins. Cannot be undone.
+          </p>
+          <ResetScoresButton />
         </section>
 
         {/* Manual override note */}

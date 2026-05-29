@@ -3,7 +3,9 @@
 import { useState } from "react"
 import { cn } from "@/lib/utils"
 import MatchCard from "./MatchCard"
+import { KnockoutBracketTree, type BracketMatch } from "./KnockoutBracketTree"
 import type { Team, Match, GroupPick } from "@/types/database"
+import { THIRD_COMBINATIONS, WINNER_GROUPS } from "@/lib/thirdCombinations"
 
 interface PickEntry {
   match: number
@@ -17,6 +19,7 @@ interface PicksJson {
   sf?: PickEntry[]
   third_place?: { winner_id: string }
   final?: { winner_id: string }
+  thirds_key?: string
 }
 
 interface BracketViewerProps {
@@ -43,7 +46,6 @@ export default function BracketViewer({ teams, groupPicks, picksJson, matches }:
   const teamById = Object.fromEntries(teams.map((t) => [t.id, t]))
   const picksByGroup = Object.fromEntries(groupPicks.map((p) => [p.group_name, p]))
 
-  // Real match lookup by round + match_number
   const matchLookup = Object.fromEntries(
     matches.map((m) => [`${m.round}-${m.match_number}`, m])
   )
@@ -68,30 +70,48 @@ export default function BracketViewer({ teams, groupPicks, picksJson, matches }:
     return (matchLookup[`${round}-${matchNum}`]?.status ?? "scheduled") as "scheduled" | "live" | "finished"
   }
 
-  // Derive R32 teams from group picks (same logic as fill wizard)
+  // Derive R32 teams from group picks — official FIFA WC2026 bracket order
   function deriveR32(): Array<{ team1: Team | null; team2: Team | null; matchNum: number }> {
     const w = (g: string) => getTeam(picksByGroup[g]?.picked_1st_id)
     const r = (g: string) => getTeam(picksByGroup[g]?.picked_2nd_id)
-    const thirds = GROUP_NAMES.map((g) => getTeam(picksByGroup[g]?.picked_3rd_id))
-      .filter(Boolean)
-      .slice(0, 8) as Team[]
 
-    const part1 = ["A","B","D","E","G","I","K","L"].map((g, i) => ({
-      team1: w(g), team2: thirds[i] ?? null, matchNum: i + 1,
-    }))
-    const part2 = [
-      { team1: w("C"), team2: r("F"), matchNum: 9 },
-      { team1: w("F"), team2: r("C"), matchNum: 10 },
-      { team1: w("J"), team2: r("H"), matchNum: 11 },
-      { team1: w("H"), team2: r("J"), matchNum: 12 },
+    const thirdsKey = picksJson?.thirds_key ?? null
+    const thirdGroupAssignment = thirdsKey ? (THIRD_COMBINATIONS[thirdsKey] ?? null) : null
+
+    // Build winner-group → assigned-third-group mapping (index aligned to WINNER_GROUPS)
+    const thirdByWinnerGroup: Partial<Record<string, string>> = {}
+    if (thirdGroupAssignment) {
+      WINNER_GROUPS.forEach((wg, i) => {
+        thirdByWinnerGroup[wg] = thirdGroupAssignment[i]
+      })
+    }
+    const getThird = (wg: string) => {
+      const tg = thirdByWinnerGroup[wg]
+      return tg ? getTeam(picksByGroup[tg]?.picked_3rd_id) : null
+    }
+
+    return [
+      // Left side top
+      { matchNum: 1,  team1: w("E"), team2: getThird("E") },   // 1E vs 3ABCDF
+      { matchNum: 2,  team1: w("I"), team2: getThird("I") },   // 1I vs 3CDFGH
+      { matchNum: 3,  team1: r("A"), team2: r("B") },          // 2A vs 2B
+      { matchNum: 4,  team1: w("F"), team2: r("C") },          // 1F vs 2C
+      // Left side bottom
+      { matchNum: 5,  team1: r("K"), team2: r("L") },          // 2K vs 2L
+      { matchNum: 6,  team1: w("H"), team2: r("J") },          // 1H vs 2J
+      { matchNum: 7,  team1: w("D"), team2: getThird("D") },   // 1D vs 3BEFIJ
+      { matchNum: 8,  team1: w("G"), team2: getThird("G") },   // 1G vs 3AEHIJ
+      // Right side top
+      { matchNum: 9,  team1: w("C"), team2: r("F") },          // 1C vs 2F
+      { matchNum: 10, team1: r("E"), team2: r("I") },          // 2E vs 2I
+      { matchNum: 11, team1: w("A"), team2: getThird("A") },   // 1A vs 3CEFHI
+      { matchNum: 12, team1: w("L"), team2: getThird("L") },   // 1L vs 3EHIJK
+      // Right side bottom
+      { matchNum: 13, team1: w("J"), team2: r("H") },          // 1J vs 2H
+      { matchNum: 14, team1: r("D"), team2: r("G") },          // 2D vs 2G
+      { matchNum: 15, team1: w("B"), team2: getThird("B") },   // 1B vs 3EFGIJ
+      { matchNum: 16, team1: w("K"), team2: getThird("K") },   // 1K vs 3DEIJL
     ]
-    const part3 = [
-      { team1: r("A"), team2: r("B"), matchNum: 13 },
-      { team1: r("G"), team2: r("D"), matchNum: 14 },
-      { team1: r("I"), team2: r("E"), matchNum: 15 },
-      { team1: r("K"), team2: r("L"), matchNum: 16 },
-    ]
-    return [...part1, ...part2, ...part3]
   }
 
   function deriveKnockout(
@@ -115,47 +135,117 @@ export default function BracketViewer({ teams, groupPicks, picksJson, matches }:
   const qf = deriveKnockout("qf", "r16", 4)
   const sf = deriveKnockout("sf", "qf", 2)
 
-  // Groups tab content
-  function GroupsTab() {
+  // Build BracketMatch arrays for the desktop tree
+  function toBracketMatches(
+    items: Array<{ team1: Team | null; team2: Team | null; matchNum: number }>,
+    roundKey: string
+  ): BracketMatch[] {
+    return items.map(({ team1, team2, matchNum }) => {
+      const realWinnerId = getRealWinner(roundKey, matchNum)
+      return {
+        matchNum,
+        teamA: team1,
+        teamB: team2,
+        winnerId: realWinnerId ?? getPickedWinner(roundKey as keyof PicksJson, matchNum),
+        realWinnerId,
+        status: getStatus(roundKey, matchNum),
+      }
+    })
+  }
+
+  const finalTeam1 = getTeam(getPickedWinner("sf", 1))
+  const finalTeam2 = getTeam(getPickedWinner("sf", 2))
+  const thirdTeam1 = sf[0]
+    ? getTeam(getPickedWinner("sf", 1) === sf[0].team1?.id ? sf[0].team2?.id ?? null : sf[0].team1?.id ?? null)
+    : null
+  const thirdTeam2 = sf[1]
+    ? getTeam(getPickedWinner("sf", 2) === sf[1].team1?.id ? sf[1].team2?.id ?? null : sf[1].team1?.id ?? null)
+    : null
+
+  const finalRealWinnerId = getRealWinner("final", 1)
+  const finalBracketMatch: BracketMatch = {
+    matchNum: 1,
+    teamA: finalTeam1,
+    teamB: finalTeam2,
+    winnerId: finalRealWinnerId ?? getPickedWinner("final", 1),
+    realWinnerId: finalRealWinnerId,
+    status: getStatus("final", 1),
+  }
+
+  const thirdRealWinnerId = getRealWinner("third_place", 1)
+  const thirdBracketMatch: BracketMatch = {
+    matchNum: 1,
+    teamA: thirdTeam1,
+    teamB: thirdTeam2,
+    winnerId: thirdRealWinnerId ?? getPickedWinner("third_place", 1),
+    realWinnerId: thirdRealWinnerId,
+    status: getStatus("third_place", 1),
+  }
+
+  // Groups tab content (shared between mobile + desktop)
+  function GroupsGrid({ compact }: { compact?: boolean }) {
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 p-4">
+      <div className={cn(
+        "grid gap-2",
+        compact ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 p-4"
+      )}>
         {GROUP_NAMES.map((g) => {
           const pick = picksByGroup[g]
           const groupTeams = teams.filter((t) => t.group_name === g)
           return (
-            <div key={g} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-              <div className="px-3 py-2 bg-gray-50 font-semibold text-sm text-gray-700 border-b">
+            <div
+              key={g}
+              className={cn(
+                "rounded border border-gray-200 bg-white overflow-hidden",
+                compact ? "text-xs" : "rounded-lg"
+              )}
+            >
+              <div className={cn(
+                "px-2 py-1 bg-gray-50 font-semibold text-gray-700 border-b",
+                !compact && "px-3 py-2 text-sm"
+              )}>
                 Group {g}
               </div>
-              <div className="divide-y divide-gray-100">
-                {groupTeams.map((t) => {
-                  const pos =
-                    pick?.picked_1st_id === t.id ? "1" :
-                    pick?.picked_2nd_id === t.id ? "2" :
-                    pick?.picked_3rd_id === t.id ? "3" : null
-                  return (
-                    <div key={t.id} className={cn("flex items-center gap-2 px-3 py-2 text-sm",
+              {groupTeams.map((t) => {
+                const pos =
+                  pick?.picked_1st_id === t.id ? "1" :
+                  pick?.picked_2nd_id === t.id ? "2" :
+                  pick?.picked_3rd_id === t.id ? "3" : null
+                return (
+                  <div
+                    key={t.id}
+                    className={cn(
+                      "flex items-center gap-1 px-2 py-1",
                       pos === "1" && "bg-yellow-50",
                       pos === "2" && "bg-gray-50",
                       pos === "3" && "bg-orange-50",
-                    )}>
-                      <img
-                        src={`https://flagcdn.com/20x15/${t.country_code.toLowerCase()}.png`}
-                        alt="" width={20} height={15} className="rounded-sm"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
-                      />
-                      <span className="truncate flex-1">{t.name}</span>
-                      {pos && (
-                        <span className={cn("text-xs font-medium px-1.5 py-0.5 rounded",
-                          pos === "1" ? "bg-yellow-100 text-yellow-700" :
-                          pos === "2" ? "bg-gray-200 text-gray-600" :
-                          "bg-orange-100 text-orange-700"
-                        )}>{POSITION_LABELS[pos]}</span>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
+                    )}
+                  >
+                    <img
+                      src={`https://flagcdn.com/16x12/${t.country_code.toLowerCase()}.png`}
+                      alt="" width={16} height={12} className="rounded-sm flex-shrink-0"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
+                    />
+                    <span className="truncate flex-1">{t.name}</span>
+                    {pos && !compact && (
+                      <span className={cn(
+                        "text-xs ml-auto",
+                        pos === "1" ? "text-yellow-600" : pos === "2" ? "text-gray-500" : "text-orange-500"
+                      )}>
+                        {POSITION_LABELS[pos]}
+                      </span>
+                    )}
+                    {pos && compact && (
+                      <span className={cn(
+                        "text-xs ml-auto",
+                        pos === "1" ? "text-yellow-600" : pos === "2" ? "text-gray-500" : "text-orange-500"
+                      )}>
+                        {pos}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )
         })}
@@ -163,44 +253,9 @@ export default function BracketViewer({ teams, groupPicks, picksJson, matches }:
     )
   }
 
-  function RoundColumn({
-    label,
-    matches: roundMatches,
-    roundKey,
-  }: {
-    label: string
-    matches: Array<{ team1: Team | null; team2: Team | null; matchNum: number }>
-    roundKey: string
-  }) {
-    return (
-      <div className="flex flex-col gap-2 min-w-[200px]">
-        <div className="text-center text-xs font-semibold text-gray-500 uppercase tracking-wide pb-1 border-b">
-          {label}
-        </div>
-        <div className="flex flex-col gap-2">
-          {roundMatches.map(({ team1, team2, matchNum }) => (
-            <MatchCard
-              key={matchNum}
-              team1={team1}
-              team2={team2}
-              pickedWinnerId={getPickedWinner(roundKey as keyof PicksJson, matchNum)}
-              realWinnerId={getRealWinner(roundKey, matchNum)}
-              status={getStatus(roundKey, matchNum)}
-              isSmall
-            />
-          ))}
-        </div>
-      </div>
-    )
-  }
-
-  const finalTeam1 = getTeam(getPickedWinner("sf", 1))
-  const finalTeam2 = getTeam(getPickedWinner("sf", 2))
-  const thirdTeam1 = sf[0] ? getTeam(getPickedWinner("sf", 1) === sf[0].team1?.id ? sf[0].team2?.id ?? null : sf[0].team1?.id ?? null) : null
-  const thirdTeam2 = sf[1] ? getTeam(getPickedWinner("sf", 2) === sf[1].team1?.id ? sf[1].team2?.id ?? null : sf[1].team1?.id ?? null) : null
-
+  // Mobile tab content
   const tabContent: Record<RoundTab, React.ReactNode> = {
-    Groups: <GroupsTab />,
+    Groups: <GroupsGrid />,
     R32: (
       <div className="flex flex-col gap-2 p-4">
         {r32.map(({ team1, team2, matchNum }) => (
@@ -250,7 +305,7 @@ export default function BracketViewer({ teams, groupPicks, picksJson, matches }:
           <MatchCard
             team1={thirdTeam1}
             team2={thirdTeam2}
-            pickedWinnerId={getPickedWinner("third_place", 0)}
+            pickedWinnerId={getPickedWinner("third_place", 1)}
             realWinnerId={getRealWinner("third_place", 1)}
             status={getStatus("third_place", 1)}
           />
@@ -262,7 +317,7 @@ export default function BracketViewer({ teams, groupPicks, picksJson, matches }:
           <MatchCard
             team1={finalTeam1}
             team2={finalTeam2}
-            pickedWinnerId={getPickedWinner("final", 0)}
+            pickedWinnerId={getPickedWinner("final", 1)}
             realWinnerId={getRealWinner("final", 1)}
             status={getStatus("final", 1)}
           />
@@ -309,74 +364,26 @@ export default function BracketViewer({ teams, groupPicks, picksJson, matches }:
         <div>{tabContent[activeTab]}</div>
       </div>
 
-      {/* Desktop: horizontal scroll bracket */}
+      {/* Desktop: groups + bracket tree side by side */}
       <div className="hidden md:block overflow-x-auto">
         <div className="flex gap-6 p-6 min-w-max items-start">
-          <div className="min-w-[520px]">
+          {/* Groups column */}
+          <div className="shrink-0 w-[480px]">
             <div className="text-center text-xs font-semibold text-gray-500 uppercase tracking-wide pb-1 border-b mb-2">
               Groups
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              {GROUP_NAMES.map((g) => {
-                const pick = picksByGroup[g]
-                const groupTeams = teams.filter((t) => t.group_name === g)
-                return (
-                  <div key={g} className="rounded border border-gray-200 bg-white overflow-hidden text-xs">
-                    <div className="px-2 py-1 bg-gray-50 font-semibold text-gray-700 border-b">Group {g}</div>
-                    {groupTeams.map((t) => {
-                      const pos = pick?.picked_1st_id === t.id ? "1" : pick?.picked_2nd_id === t.id ? "2" : pick?.picked_3rd_id === t.id ? "3" : null
-                      return (
-                        <div key={t.id} className={cn("flex items-center gap-1 px-2 py-1",
-                          pos === "1" && "bg-yellow-50", pos === "2" && "bg-gray-50", pos === "3" && "bg-orange-50"
-                        )}>
-                          <img src={`https://flagcdn.com/16x12/${t.country_code.toLowerCase()}.png`} alt="" width={16} height={12} className="rounded-sm flex-shrink-0"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }} />
-                          <span className="truncate flex-1">{t.name}</span>
-                          {pos && <span className={cn("text-xs ml-auto", pos==="1"?"text-yellow-600":pos==="2"?"text-gray-500":"text-orange-500")}>{pos}st</span>}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )
-              })}
-            </div>
+            <GroupsGrid compact />
           </div>
 
-          <RoundColumn label="R32" roundKey="r32" matches={r32} />
-          <RoundColumn label="R16" roundKey="r16" matches={r16} />
-          <RoundColumn label="QF" roundKey="qf" matches={qf} />
-          <RoundColumn label="SF" roundKey="sf" matches={sf} />
-
-          {/* Final column */}
-          <div className="flex flex-col gap-4 min-w-[200px]">
-            <div className="text-center text-xs font-semibold text-gray-500 uppercase tracking-wide pb-1 border-b">
-              Final
-            </div>
-            <div>
-              <p className="text-xs text-gray-400 text-center mb-1">3rd Place</p>
-              <MatchCard team1={thirdTeam1} team2={thirdTeam2}
-                pickedWinnerId={getPickedWinner("third_place", 0)}
-                realWinnerId={getRealWinner("third_place", 1)}
-                status={getStatus("third_place", 1)} isSmall />
-            </div>
-            <div>
-              <p className="text-xs text-gray-400 text-center mb-1">Champion</p>
-              <MatchCard team1={finalTeam1} team2={finalTeam2}
-                pickedWinnerId={getPickedWinner("final", 0)}
-                realWinnerId={getRealWinner("final", 1)}
-                status={getStatus("final", 1)} isSmall />
-            </div>
-            {picksJson?.final?.winner_id && (
-              <div className="text-center mt-1">
-                <div className="flex items-center gap-1.5 justify-center">
-                  <img src={`https://flagcdn.com/24x18/${teamById[picksJson.final.winner_id]?.country_code.toLowerCase()}.png`}
-                    alt="" width={24} height={18} className="rounded" />
-                  <span className="font-bold text-sm">{teamById[picksJson.final.winner_id]?.name}</span>
-                  <span>🏆</span>
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Knockout bracket tree */}
+          <KnockoutBracketTree
+            r32={toBracketMatches(r32, "r32")}
+            r16={toBracketMatches(r16, "r16")}
+            qf={toBracketMatches(qf, "qf")}
+            sf={toBracketMatches(sf, "sf")}
+            final={finalBracketMatch}
+            thirdPlace={thirdBracketMatch}
+          />
         </div>
       </div>
     </div>

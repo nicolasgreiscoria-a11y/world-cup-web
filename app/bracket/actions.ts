@@ -27,6 +27,7 @@ export interface KnockoutPicksJson {
   sf: KnockoutMatchPick[];
   third_place: { winner_id: string } | null;
   final: { winner_id: string } | null;
+  thirds_key?: string;
 }
 
 export async function submitBracket(
@@ -48,7 +49,7 @@ export async function submitBracket(
   // Verify bracket belongs to current user
   const { data: bracket, error: bracketError } = await supabase
     .from("brackets")
-    .select("id, user_id, submitted_at")
+    .select("id, user_id, submitted_at, pool_id")
     .eq("id", bracketId)
     .single();
 
@@ -62,6 +63,17 @@ export async function submitBracket(
 
   if (bracket.submitted_at) {
     return { error: "already submitted" };
+  }
+
+  // Reject submissions after the pool locks (tournament has started)
+  const { data: pool } = await supabase
+    .from("pools")
+    .select("locked_at")
+    .eq("id", bracket.pool_id)
+    .single();
+
+  if (pool && new Date(pool.locked_at) <= new Date()) {
+    return { error: "Pool is locked — the tournament has started" };
   }
 
   // Upsert 72 match_score_picks rows

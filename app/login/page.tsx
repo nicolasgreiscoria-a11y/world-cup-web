@@ -2,7 +2,7 @@ import Link from "next/link";
 import { login } from "@/app/auth/actions";
 
 interface LoginPageProps {
-  searchParams: Promise<{ error?: string; redirect?: string }>;
+  searchParams: Promise<{ error?: string; message?: string; redirect?: string }>;
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
@@ -14,6 +14,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
           <h1 className="mb-1 text-2xl font-bold text-slate-900">Welcome back</h1>
           <p className="mb-6 text-sm text-slate-500">Sign in to your account</p>
+
+          {params.message === "email_confirmed" && (
+            <div className="mb-4 rounded-md bg-green-50 px-4 py-3 text-sm text-green-700 border border-green-200">
+              Email confirmed. You can now log in.
+            </div>
+          )}
 
           {params.error && (
             <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700 border border-red-200">

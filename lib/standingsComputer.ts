@@ -206,20 +206,25 @@ export function deriveGroupPicks(
   return picks
 }
 
+export interface AdvancingThird {
+  teamId: string;
+  groupName: string;
+}
+
 /**
  * Compute the 8 best advancing third-place teams from all 12 groups.
  * Tiebreaker: points → GD → GF → alphabetical by team name
  */
 export function computeBestThirds(
   thirds: BestThirdEntry[]
-): string[] {
+): AdvancingThird[] {
   const sorted = [...thirds].sort((a, b) => {
     if (b.points !== a.points) return b.points - a.points
     if (b.gd !== a.gd) return b.gd - a.gd
     if (b.gf !== a.gf) return b.gf - a.gf
     return a.name.localeCompare(b.name)
   })
-  return sorted.slice(0, 8).map((t) => t.teamId)
+  return sorted.slice(0, 8).map((t) => ({ teamId: t.teamId, groupName: t.groupName }))
 }
 
 /**

@@ -71,10 +71,12 @@ export interface Database {
           id: string
           display_name: string
           avatar_url: string | null
+          is_admin: boolean
           created_at: string
         }
-        Insert: Omit<Database["public"]["Tables"]["profiles"]["Row"], "created_at"> & {
+        Insert: Omit<Database["public"]["Tables"]["profiles"]["Row"], "created_at" | "is_admin"> & {
           created_at?: string
+          is_admin?: boolean
         }
         Update: Partial<Omit<Database["public"]["Tables"]["profiles"]["Row"], "id">>
         Relationships: []
